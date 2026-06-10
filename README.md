@@ -63,6 +63,17 @@ npm run build    # production build (output in dist/)
 npm run preview  # serve the production build locally
 ```
 
+## Deployment
+
+The site is fully static, so it deploys to GitHub Pages for free. A workflow
+(`.github/workflows/deploy.yml`) builds and publishes it on every push to
+`master`. One-time setup: repository **Settings → Pages → Source: GitHub
+Actions**. The site then lives at `https://<user>.github.io/ai-visualization/`.
+
+Hash-based routing and `base: "./"` mean the build also works on any other
+static host (Netlify, Vercel, Cloudflare Pages): build command `npm run build`,
+output directory `dist`.
+
 ## Project Structure
 
 ```
