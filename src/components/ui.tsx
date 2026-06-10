@@ -6,6 +6,75 @@ import { fmt } from "../lib/format";
 
 /* ---------- каркас страницы ---------- */
 
+/** Рекомендуемый маршрут по сайту — по нему строится навигация «дальше →». */
+export const ROUTE_ORDER = [
+  { to: "/big-picture", num: "00", label: "Общая картина" },
+  { to: "/roles", num: "🧩", label: "Кто за что отвечает" },
+  { to: "/neuron", num: "01", label: "Нейрон и активации" },
+  { to: "/forward-pass", num: "02", label: "Forward pass" },
+  { to: "/gradient-descent", num: "03", label: "Градиентный спуск" },
+  { to: "/backpropagation", num: "04", label: "Backpropagation" },
+];
+
+function PrevNext({ pathname }: { pathname: string }) {
+  const idx = ROUTE_ORDER.findIndex((r) => r.to === pathname);
+  if (idx === -1) return null;
+  const prev = ROUTE_ORDER[idx - 1];
+  const next = ROUTE_ORDER[idx + 1];
+  return (
+    <nav className="mt-10 flex flex-wrap items-stretch justify-between gap-3 border-t border-edge pt-5">
+      {prev ? (
+        <Link
+          to={prev.to}
+          className="rounded-xl border border-edge bg-panel px-4 py-3 no-underline transition-colors hover:border-accent"
+        >
+          <div className="text-[11.5px] uppercase tracking-wider text-muted">
+            ← назад
+          </div>
+          <div className="text-[14.5px] font-semibold text-ink">
+            {prev.num} · {prev.label}
+          </div>
+        </Link>
+      ) : (
+        <Link
+          to="/"
+          className="rounded-xl border border-edge bg-panel px-4 py-3 no-underline transition-colors hover:border-accent"
+        >
+          <div className="text-[11.5px] uppercase tracking-wider text-muted">
+            ← назад
+          </div>
+          <div className="text-[14.5px] font-semibold text-ink">Главная</div>
+        </Link>
+      )}
+      {next ? (
+        <Link
+          to={next.to}
+          className="rounded-xl border border-[#2d68b8] bg-[#1f3a5f]/40 px-4 py-3 text-right no-underline transition-colors hover:border-accent"
+        >
+          <div className="text-[11.5px] uppercase tracking-wider text-muted">
+            дальше →
+          </div>
+          <div className="text-[14.5px] font-semibold text-ink">
+            {next.num} · {next.label}
+          </div>
+        </Link>
+      ) : (
+        <Link
+          to="/"
+          className="rounded-xl border border-[#2d68b8] bg-[#1f3a5f]/40 px-4 py-3 text-right no-underline transition-colors hover:border-accent"
+        >
+          <div className="text-[11.5px] uppercase tracking-wider text-muted">
+            🏁 маршрут пройден
+          </div>
+          <div className="text-[14.5px] font-semibold text-ink">
+            На главную — дальше блок 2 (скоро)
+          </div>
+        </Link>
+      )}
+    </nav>
+  );
+}
+
 export function Layout({
   crumb,
   crumbEn,
@@ -36,8 +105,20 @@ export function Layout({
             )}
           </span>
         )}
+        {pathname !== "/roles" && (
+          <Link
+            to="/roles"
+            title="Шпаргалка: кто за что отвечает"
+            className="ml-auto whitespace-nowrap text-sm text-muted no-underline hover:text-accent"
+          >
+            🧩 шпаргалка
+          </Link>
+        )}
       </header>
-      <main className="mx-auto max-w-[1180px] px-5 pb-14 pt-5">{children}</main>
+      <main className="mx-auto max-w-[1180px] px-5 pb-14 pt-5">
+        {children}
+        <PrevNext pathname={pathname} />
+      </main>
     </>
   );
 }

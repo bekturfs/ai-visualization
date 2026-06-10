@@ -599,6 +599,10 @@ export default function Backprop() {
               </button>
             }
           >
+            <div className="mb-2 text-[12px] text-muted">
+              формулы здесь — для любопытных: для понимания сути достаточно
+              истории и подсветки на графе
+            </div>
             <div
               ref={logRef}
               className="h-[330px] overflow-y-auto rounded-lg border border-edge bg-[#0e131b] px-3 py-2.5 font-mono text-[12.8px] leading-[1.8]"
