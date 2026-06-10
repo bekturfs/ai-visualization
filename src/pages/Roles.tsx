@@ -26,9 +26,16 @@ export default function Roles() {
   const take = a > 0.5;
   const target = rained ? 1 : 0;
   const loss = (a - target) ** 2;
-  // самый влиятельный факт прямо сейчас
+  // самый влиятельный факт (по модулю вклада) и самый «громкий» вес прямо сейчас
   const contribs = w.map((wi, i) => wi * x[i]);
-  const maxIdx = contribs.indexOf(Math.max(...contribs.map(Math.abs)));
+  const maxIdx = contribs.reduce(
+    (best, c, i) => (Math.abs(c) > Math.abs(contribs[best]) ? i : best),
+    0,
+  );
+  const topW = w.reduce(
+    (best, wi, i) => (Math.abs(wi) > Math.abs(w[best]) ? i : best),
+    0,
+  );
 
   const setXi = (i: number, v: number) =>
     setX((xs) => xs.map((o, j) => (j === i ? v : o)));
@@ -89,9 +96,10 @@ export default function Roles() {
       ),
       example: (
         <>
-          «{FACTS[2].name}» имеет вес {fmt(w[2])} — выше остальных: даже слабая
-          морось перевешивает любой прогноз. Самый влиятельный вклад сейчас —{" "}
-          {FACTS[maxIdx].emoji} «{FACTS[maxIdx].short}» ({fmt(contribs[maxIdx])})
+          самый «громкий» факт сейчас — {FACTS[topW].emoji} «{FACTS[topW].short}»
+          (вес {fmt(w[topW])}), а с учётом самих фактов сильнее всего на решение
+          давит {FACTS[maxIdx].emoji} «{FACTS[maxIdx].short}» (вклад{" "}
+          {fmt(contribs[maxIdx])}). Подвигай ползунки важности — лидер сменится
         </>
       ),
       link: { to: "/neuron", label: "01 · Нейрон" },
@@ -264,9 +272,11 @@ export default function Roles() {
       ),
       example: (
         <>
-          {rained && a < 0.99
-            ? "промокли → градиент скажет: веса «дождевых» фактов увеличить, чтобы в следующий раз зонт взять"
-            : "зря таскали зонт → градиент скажет: веса чуть уменьшить, паниковать меньше"}
+          {loss < 0.1
+            ? "сеть почти угадала — градиенты крошечные, веса почти не изменятся (не сломано — не чини)"
+            : rained
+              ? "промокли → градиент скажет: веса «дождевых» фактов увеличить, чтобы в следующий раз зонт взять"
+              : "зря таскали зонт → градиент скажет: веса чуть уменьшить, паниковать меньше"}
         </>
       ),
       link: { to: "/gradient-descent", label: "03 · Градиентный спуск" },
