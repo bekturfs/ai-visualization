@@ -175,6 +175,39 @@ export default function Home() {
         <HeroNet />
       </div>
 
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12 }}
+        className="mt-9"
+      >
+        <Link
+          to="/big-picture"
+          className="group flex items-center gap-5 rounded-2xl border border-[#2d68b8]/70 bg-gradient-to-br from-[#16233a] to-panel px-6 py-5 no-underline transition-all hover:-translate-y-0.5 hover:border-accent"
+        >
+          <div className="rounded-xl border border-accent/35 bg-accent/10 px-3 py-2 font-mono text-lg font-bold leading-none text-accent">
+            00
+          </div>
+          <div>
+            <div className="text-lg font-semibold text-ink">
+              Начни отсюда: как ИИ пишет ответ — общая картина{" "}
+              <span className="text-[13px] font-normal text-muted">
+                (the big picture)
+              </span>
+            </div>
+            <p className="m-0 mt-1 max-w-[760px] text-[14px] leading-normal text-soft">
+              Текст заходит → токены → числа → нейросеть → вероятности → новое
+              слово. Весь конвейер на одном экране, с живой мини-моделью прямо
+              в браузере — поймёт даже непрограммист. Остальные страницы
+              разбирают каждую станцию по отдельности.
+            </p>
+          </div>
+          <span className="ml-auto text-2xl text-faint transition-transform group-hover:translate-x-1 group-hover:text-accent max-md:hidden">
+            →
+          </span>
+        </Link>
+      </motion.div>
+
       <h2 className="mb-3.5 mt-9 text-[13px] font-semibold uppercase tracking-[0.08em] text-muted">
         Блок 1 · Основы нейросетей (neural network fundamentals)
       </h2>

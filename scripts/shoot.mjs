@@ -6,6 +6,7 @@ const exe = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 
 const shots = [
   { name: "home", url: "/#/", wait: 1200 },
+  { name: "big-picture", url: "/#/big-picture", wait: 4000 },
   { name: "neuron-story", url: "/#/neuron", wait: 1200 },
   { name: "forward-story", url: "/#/forward-pass", wait: 1200 },
   { name: "gd-story", url: "/#/gradient-descent", wait: 2500 },

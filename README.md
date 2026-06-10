@@ -10,6 +10,9 @@ Every topic is built as a **step-by-step story in plain language** (with real-li
 
 ## Roadmap
 
+### 0. The Big Picture
+- [x] [How AI writes an answer](src/pages/BigPicture.tsx) — the whole pipeline on one screen: text → tokens → numbers → network → probabilities → next word. Powered by a real tiny n-gram model trained in the browser on a built-in corpus, with honest probabilities, temperature lottery and several starter phrases. Built for non-programmers.
+
 ### 1. Neural Network Fundamentals
 - [x] [Neuron & activation functions](src/pages/Neuron.tsx) — what a single neuron computes: guided story, live signals flowing along the wires, honest formulas, challenges
 - [x] [Forward pass](src/pages/ForwardPass.tsx) — animated wave of computation rolling through a 2–3–2 network; click any neuron to see its personal formula
