@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>03 · Градиентный спуск — AI-визуализации</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#151b24; --panel2:#1b2330; --border:#2b3444;
+    --text:#e7edf4; --muted:#8b98ab;
+    --blue:#58a6ff; --red:#f0564f; --orange:#ffa657; --green:#56d364;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .mono{font-family:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace}
+  header.top{
+    position:sticky;top:0;z-index:10;display:flex;align-items:baseline;gap:16px;
+    padding:13px 22px;background:rgba(13,17,23,.93);border-bottom:1px solid var(--border);
+    backdrop-filter:blur(6px);
+  }
+  header.top a{color:var(--muted);text-decoration:none;font-size:14px;white-space:nowrap}
+  header.top a:hover{color:var(--blue)}
+  header.top .crumb{font-weight:650;font-size:15px}
+  header.top .crumb .en{color:var(--muted);font-weight:400;font-size:13px}
+  main{max-width:1180px;margin:0 auto;padding:20px 22px 48px}
+  h1{font-size:23px;margin:8px 0 6px}
+  p.lead{color:var(--muted);margin:0 0 18px;max-width:920px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
+  .card h2{margin:0 0 12px;font-size:12.5px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+  .plotWrap{position:relative}
+  canvas{display:block;width:100%;height:380px;cursor:crosshair;border-radius:8px}
+  .warn{
+    position:absolute;top:14px;left:50%;transform:translateX(-50%);
+    background:rgba(60,18,18,.92);border:1px solid #8a3633;color:#ffb3ae;
+    border-radius:9px;padding:8px 16px;font-size:14px;display:none;white-space:nowrap;
+  }
+  .warn.show{display:block}
+  .hint{font-size:12.5px;color:var(--muted);margin-top:8px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;align-items:start}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  .seg{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .seg button{
+    background:#202938;border:1px solid #344158;color:var(--text);border-radius:8px;
+    padding:6px 13px;font:inherit;font-size:13.5px;cursor:pointer;
+  }
+  .seg button:hover{border-color:var(--blue)}
+  .seg button.on{background:#1f3a5f;border-color:#2d68b8;color:#cfe5ff}
+  .row{display:grid;grid-template-columns:130px 1fr 62px;align-items:center;gap:10px;margin:8px 0}
+  .row label{font-size:13.5px;color:var(--muted)}
+  .row output{font-family:ui-monospace,Consolas,monospace;font-size:13.5px;text-align:right}
+  input[type=range]{
+    -webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:2px;
+    background:#2e3950;outline:none;cursor:pointer;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;appearance:none;width:15px;height:15px;border-radius:50%;
+    background:var(--orange);border:2px solid #0d1117;cursor:pointer;
+  }
+  input[type=range]::-moz-range-thumb{
+    width:13px;height:13px;border-radius:50%;background:var(--orange);border:2px solid #0d1117;cursor:pointer;
+  }
+  .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  button.act{
+    background:#202938;border:1px solid #344158;color:var(--text);border-radius:8px;
+    padding:8px 16px;font:inherit;font-size:14px;cursor:pointer;
+  }
+  button.act:hover{border-color:var(--blue)}
+  button.act.primary{background:#1f3a5f;border-color:#2d68b8}
+  .nums{font-size:14px;line-height:2.05;overflow-wrap:break-word}
+  .nums .lbl{color:var(--muted)}
+  .nums .g{color:var(--orange)}
+  .nums .res{color:var(--green);font-weight:600}
+  .etaNote{font-size:12.5px;color:var(--muted);margin-top:2px;line-height:1.5}
+  .explain{margin-top:16px}
+  .explain p{margin:8px 0;color:#c2cdda;max-width:1000px}
+  .explain .vid{color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<header class="top">
+  <a href="../../index.html">← все визуализации</a>
+  <span class="crumb">03 · Градиентный спуск <span class="en">(gradient descent)</span></span>
+</header>
+<main>
+  <h1>Как сеть спускается к минимуму потерь</h1>
+  <p class="lead">
+    Функция потерь (loss function) L(w) показывает, насколько сеть ошибается при данном весе w.
+    Обучение — это повтор одного правила: <span class="mono">w ← w − η·∇L</span>, где
+    <span style="color:var(--orange)">∇L — градиент</span> (наклон касательной), а η — learning rate.
+    Кликни по графику, чтобы поставить шарик, и крути η.
+  </p>
+
+  <div class="card">
+    <h2>Ландшафт потерь (loss landscape)</h2>
+    <div class="plotWrap">
+      <canvas id="plot"></canvas>
+      <div class="warn" id="warn">⚠ Расходимся: слишком большой learning rate (η). Кликни по графику или смени η и поставь шарик заново.</div>
+    </div>
+    <div class="hint">Клик по графику — поставить шарик (ball) в эту точку. Оранжевая линия — касательная (градиент ∇L).</div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Управление</h2>
+      <div class="seg" id="presetSeg">
+        <button data-p="parabola" class="on">Парабола (выпуклая)</button>
+        <button data-p="bumpy">Невыпуклая (локальные минимумы)</button>
+      </div>
+      <div class="row">
+        <label for="sEta">learning rate η</label>
+        <input type="range" id="sEta" min="0.01" max="3" step="0.01" value="0.3">
+        <output id="vEta"></output>
+      </div>
+      <div class="etaNote">
+        η ≈ 0.05 — медленная сходимость · η ≈ 1.8 — осцилляции ·
+        η &gt; 2 — расходимость (для параболы 0.5(w−c)²)
+      </div>
+      <div class="btns">
+        <button class="act" id="bStep">Шаг</button>
+        <button class="act primary" id="bRun">▶ Старт</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Числа на этом шаге</h2>
+      <div class="nums mono" id="nums"></div>
+    </div>
+  </div>
+
+  <section class="card explain">
+    <h2>Что здесь происходит</h2>
+    <p>
+      Обучение сети — это поиск минимума функции потерь. Мы стоим в точке w, считаем градиент ∇L —
+      наклон касательной — и делаем шаг в противоположную сторону: вниз по склону. Learning rate η
+      задаёт длину шага, и это главная ручка обучения: маленький η — ползём медленно, но верно;
+      большой — перепрыгиваем минимум и осциллируем из стороны в сторону; слишком большой (для этой
+      параболы η &gt; 2) — каждый шаг забрасывает нас всё выше, и мы улетаем в бесконечность.
+      Включи невыпуклую функцию и увидишь вторую засаду: спуск останавливается в ближайшем
+      локальном минимуме (local minimum), и куда мы скатимся, зависит от стартовой точки — покликай
+      по разным местам графика. В настоящих сетях всё то же самое, только w — миллионы координат сразу.
+    </p>
+    <p class="vid">
+      📺 К видео: 3Blue1Brown — «Gradient descent, how neural networks learn» (глава 2)
+      и Karpathy — «Zero to Hero», часть 1: тот самый цикл «forward → grad → w −= lr·grad».
+    </p>
+  </section>
+</main>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const C = { blue:'#58a6ff', red:'#f0564f', orange:'#ffa657', green:'#56d364',
+            muted:'#8b98ab', grid:'#222b3a', axis:'#3a465c', text:'#e7edf4' };
+
+function fmt(v){
+  if (!isFinite(v)) return v > 0 ? '∞' : '−∞';
+  let r = Math.round(v * 100) / 100;
+  if (Object.is(r, -0) || r === 0) r = 0;
+  return r < 0 ? '−' + Math.abs(r).toFixed(2) : r.toFixed(2);
+}
+const par = v => v < 0 ? '(' + fmt(v) + ')' : fmt(v);
+
+// ---------- пресеты функций потерь ----------
+const PRESETS = {
+  parabola: {
+    label: 'L(w) = 0.5·(w − 1)²',
+    f: w => 0.5 * (w - 1) ** 2,
+    g: w => (w - 1),                  // dL/dw
+    wMin: -5, wMax: 7, lMin: -1.2, lMax: 18.5, w0: -4,
+  },
+  bumpy: {
+    label: 'L(w) = 0.06w² + 0.8·sin(1.7w) + 1.1',
+    f: w => 0.06*w*w + 0.8*Math.sin(1.7*w) + 1.1,
+    g: w => 0.12*w + 1.36*Math.cos(1.7*w),
+    wMin: -8, wMax: 8, lMin: -0.6, lMax: 6.4, w0: 6.6,
+  },
+};
+let preset = 'parabola';
+let P = PRESETS[preset];
+let w = P.w0;
+let trail = [];        // предыдущие позиции — чтобы были видны прыжки
+let diverged = false;
+let timer = null;      // авто-режим
+
+const eta = () => parseFloat($('sEta').value);
+
+// ---------- canvas ----------
+const cv = $('plot'), ctx = cv.getContext('2d');
+const pad = {l:46, r:16, t:14, b:30};
+let Wpx = 0, Hpx = 0;
+function fit(){
+  const dpr = window.devicePixelRatio || 1;
+  const r = cv.getBoundingClientRect();
+  cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  Wpx = r.width; Hpx = r.height;
+}
+const X = ww => pad.l + (ww - P.wMin) / (P.wMax - P.wMin) * (Wpx - pad.l - pad.r);
+const Y = ll => Hpx - pad.b - (ll - P.lMin) / (P.lMax - P.lMin) * (Hpx - pad.t - pad.b);
+const fromX = px => P.wMin + (px - pad.l) / (Wpx - pad.l - pad.r) * (P.wMax - P.wMin);
+const clampW = ww => Math.min(Math.max(ww, P.wMin), P.wMax);
+
+function draw(){
+  fit();
+  ctx.clearRect(0, 0, Wpx, Hpx);
+  ctx.font = '11px ui-monospace, Consolas, monospace';
+  // сетка + подписи осей
+  ctx.strokeStyle = C.grid; ctx.lineWidth = 1; ctx.fillStyle = C.muted;
+  const wStep = (P.wMax - P.wMin) > 14 ? 2 : 1;
+  for (let t = Math.ceil(P.wMin); t <= P.wMax; t += wStep){
+    ctx.beginPath(); ctx.moveTo(X(t), pad.t); ctx.lineTo(X(t), Hpx - pad.b); ctx.stroke();
+    ctx.textAlign = 'center'; ctx.fillText(String(t), X(t), Hpx - 10);
+  }
+  const lStep = P.lMax > 10 ? 4 : 1;
+  for (let t = Math.ceil(P.lMin); t <= P.lMax; t += lStep){
+    ctx.beginPath(); ctx.moveTo(pad.l, Y(t)); ctx.lineTo(Wpx - pad.r, Y(t)); ctx.stroke();
+    ctx.textAlign = 'right'; ctx.fillText(String(t), pad.l - 6, Y(t) + 3.5);
+  }
+  // ось L(w)=0
+  if (P.lMin < 0){
+    ctx.strokeStyle = C.axis; ctx.lineWidth = 1.3;
+    ctx.beginPath(); ctx.moveTo(pad.l, Y(0)); ctx.lineTo(Wpx - pad.r, Y(0)); ctx.stroke();
+  }
+  ctx.fillStyle = C.muted; ctx.textAlign = 'left';
+  ctx.fillText('w', Wpx - pad.r - 10, Hpx - pad.b - 6);
+  ctx.fillText('L(w)', pad.l + 6, pad.t + 10);
+  ctx.textAlign = 'right';
+  ctx.fillText(P.label, Wpx - pad.r - 4, pad.t + 10);
+  // кривая потерь
+  ctx.strokeStyle = C.blue; ctx.lineWidth = 2.4; ctx.beginPath();
+  const N = 360;
+  for (let i = 0; i <= N; i++){
+    const ww = P.wMin + (P.wMax - P.wMin) * i / N;
+    const ll = Math.min(Math.max(P.f(ww), P.lMin), P.lMax + 1);
+    i === 0 ? ctx.moveTo(X(ww), Y(ll)) : ctx.lineTo(X(ww), Y(ll));
+  }
+  ctx.stroke();
+  // след предыдущих позиций с затуханием + линии прыжков
+  const pts = [...trail, w];
+  for (let i = 0; i < pts.length - 1; i++){
+    const a = (i + 1) / pts.length;
+    const w1c = clampW(pts[i]), w2c = clampW(pts[i+1]);
+    ctx.strokeStyle = 'rgba(231,237,244,' + (a * 0.30).toFixed(3) + ')';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(X(w1c), Y(P.f(w1c))); ctx.lineTo(X(w2c), Y(P.f(w2c))); ctx.stroke();
+  }
+  trail.forEach((tw, i) => {
+    const a = (i + 1) / (trail.length + 1);
+    const wc = clampW(tw);
+    ctx.fillStyle = 'rgba(231,237,244,' + (0.10 + a * 0.42).toFixed(3) + ')';
+    ctx.beginPath(); ctx.arc(X(wc), Y(P.f(wc)), 4, 0, Math.PI*2); ctx.fill();
+  });
+  // касательная (градиент) в точке шарика
+  const wc = clampW(w);
+  const L = P.f(wc), g = P.g(wc);
+  const dw = (P.wMax - P.wMin) * 0.085;
+  ctx.strokeStyle = C.orange; ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(X(wc - dw), Y(L - g * dw));
+  ctx.lineTo(X(wc + dw), Y(L + g * dw));
+  ctx.stroke();
+  // шарик
+  ctx.globalAlpha = diverged ? 0.45 : 1;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(X(wc), Y(L), 8, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = C.blue; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(X(wc), Y(L), 8, 0, Math.PI*2); ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+// ---------- панель чисел ----------
+function drawNums(){
+  const g = P.g(w), L = P.f(w), e = eta();
+  const wn = w - e * g;
+  $('nums').innerHTML =
+    '<div><span class="lbl">w&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;=</span> ' + fmt(w) + '</div>' +
+    '<div><span class="lbl">L(w)&nbsp;&nbsp;=</span> ' + fmt(L) + '</div>' +
+    '<div><span class="lbl">∇L(w)&nbsp;=</span> <span class="g">' + fmt(g) + '</span> <span class="lbl">← наклон касательной (gradient)</span></div>' +
+    '<div><span class="lbl">w ← w − η·∇L:</span>&nbsp; ' + fmt(w) + ' − ' + fmt(e) + '·<span class="g">' + par(g) +
+    '</span> = <span class="res">' + fmt(wn) + '</span></div>';
+  $('vEta').textContent = fmt(e);
+}
+
+function refresh(){ draw(); drawNums(); }
+
+// ---------- шаг градиентного спуска ----------
+function step(){
+  if (diverged) return;
+  const g = P.g(w);
+  trail.push(w);
+  if (trail.length > 14) trail.shift();
+  w = w - eta() * g;
+  if (w < P.wMin - 1e-9 || w > P.wMax + 1e-9 || !isFinite(w)){
+    diverged = true;
+    stopAuto();
+    $('warn').classList.add('show');
+  }
+  refresh();
+}
+
+// ---------- авто-режим ----------
+function startAuto(){
+  if (timer || diverged) return;
+  timer = setInterval(step, 350);
+  $('bRun').textContent = '⏸ Пауза';
+}
+function stopAuto(){
+  if (timer){ clearInterval(timer); timer = null; }
+  $('bRun').textContent = '▶ Старт';
+}
+
+// ---------- события ----------
+$('bStep').addEventListener('click', () => { stopAuto(); step(); });
+$('bRun').addEventListener('click', () => timer ? stopAuto() : startAuto());
+$('sEta').addEventListener('input', drawNums);
+cv.addEventListener('click', e => {
+  const r = cv.getBoundingClientRect();
+  const ww = fromX(e.clientX - r.left);
+  if (ww < P.wMin || ww > P.wMax) return;
+  w = ww; trail = []; diverged = false;
+  $('warn').classList.remove('show');
+  refresh();
+});
+$('presetSeg').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  for (const x of $('presetSeg').children) x.classList.toggle('on', x === b);
+  preset = b.dataset.p; P = PRESETS[preset];
+  w = P.w0; trail = []; diverged = false;
+  stopAuto(); $('warn').classList.remove('show');
+  refresh();
+});
+window.addEventListener('resize', refresh);
+refresh();
+</script>
+</body>
+</html>

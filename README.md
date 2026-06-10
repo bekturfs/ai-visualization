@@ -11,10 +11,10 @@ Reading about AI is one thing; **seeing** it is another. The goal of this projec
 ## Roadmap
 
 ### 1. Neural Network Fundamentals
-- [ ] Neuron & activation functions — what a single neuron computes
-- [ ] Forward pass — how data flows through layers
-- [ ] Gradient descent — loss landscape and how the network learns
-- [ ] Backpropagation — how errors flow backwards
+- [x] [Neuron & activation functions](visualizations/01-neuron/index.html) — what a single neuron computes
+- [x] [Forward pass](visualizations/02-forward-pass/index.html) — how data flows through layers
+- [x] [Gradient descent](visualizations/03-gradient-descent/index.html) — loss landscape and how the network learns
+- [x] [Backpropagation](visualizations/04-backpropagation/index.html) — how errors flow backwards
 
 ### 2. How LLMs Work
 - [ ] Tokenization — how text becomes tokens (BPE in action)
@@ -43,11 +43,24 @@ Reading about AI is one thing; **seeing** it is another. The goal of this projec
 
 ## Tech Stack
 
-To be decided — likely a web stack (interactive visualizations in the browser). Will be documented here once the first visualization is built.
+Plain HTML + CSS + vanilla JavaScript — no frameworks, no build step, zero external dependencies. Every visualization is a single self-contained `index.html` (styles and scripts inlined) that works straight from `file://`.
+
+To use it: clone the repo and open `index.html` in a browser. That's it.
+
+The UI is in Russian with key terms duplicated in English, since the visualizations are designed as companions to English-language videos (3Blue1Brown's neural networks series and Andrej Karpathy's "Neural Networks: Zero to Hero").
 
 ## Project Structure
 
-One folder per visualization, each self-contained. Details will appear as the project grows.
+```
+index.html                        — home page: links to all visualizations
+visualizations/
+  01-neuron/index.html            — neuron & activation functions
+  02-forward-pass/index.html      — forward pass through a 2–3–2 network
+  03-gradient-descent/index.html  — gradient descent on a loss landscape
+  04-backpropagation/index.html   — backpropagation on a micrograd-style computational graph
+```
+
+One folder per visualization, each fully self-contained: markup, styles, and all the math live in one file you can read top to bottom.
 
 ## License
 

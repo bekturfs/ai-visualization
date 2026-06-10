@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>04 · Backpropagation — AI-визуализации</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#151b24; --panel2:#1b2330; --border:#2b3444;
+    --text:#e7edf4; --muted:#8b98ab;
+    --blue:#58a6ff; --red:#f0564f; --orange:#ffa657; --green:#56d364;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .mono{font-family:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace}
+  header.top{
+    position:sticky;top:0;z-index:10;display:flex;align-items:baseline;gap:16px;
+    padding:13px 22px;background:rgba(13,17,23,.93);border-bottom:1px solid var(--border);
+    backdrop-filter:blur(6px);
+  }
+  header.top a{color:var(--muted);text-decoration:none;font-size:14px;white-space:nowrap}
+  header.top a:hover{color:var(--blue)}
+  header.top .crumb{font-weight:650;font-size:15px}
+  header.top .crumb .en{color:var(--muted);font-weight:400;font-size:13px}
+  main{max-width:1180px;margin:0 auto;padding:20px 22px 48px}
+  h1{font-size:23px;margin:8px 0 6px}
+  p.lead{color:var(--muted);margin:0 0 18px;max-width:940px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
+  .card h2{margin:0 0 12px;font-size:12.5px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+  svg{display:block;width:100%;height:auto}
+  svg text{font-family:ui-monospace,"SF Mono",Consolas,monospace}
+  svg .nbox{transition:filter .2s, stroke .2s}
+  svg .nbox.lit{stroke:#79b8ff !important;stroke-width:2.4;filter:drop-shadow(0 0 7px rgba(88,166,255,.75))}
+  svg .nbox.litg{stroke:var(--orange) !important;stroke-width:2.4;filter:drop-shadow(0 0 7px rgba(255,166,87,.75))}
+  svg .edge{transition:stroke .2s}
+  svg .edge.ehot{stroke:#9fc4ff !important;stroke-width:2.4}
+  svg .edge.ehotg{stroke:var(--orange) !important;stroke-width:2.4}
+  .legend{font-size:12.5px;color:var(--muted);margin-top:8px}
+  .legend .p{color:var(--blue)} .legend .g{color:var(--orange)}
+  .grid{display:grid;grid-template-columns:.9fr 1.1fr;gap:16px;margin-top:16px;align-items:start}
+  @media (max-width:980px){.grid{grid-template-columns:1fr}}
+  .row{display:grid;grid-template-columns:118px 1fr 62px;align-items:center;gap:10px;margin:7px 0}
+  .row label{font-family:ui-monospace,Consolas,monospace;font-size:13.5px;color:var(--muted)}
+  .row output{font-family:ui-monospace,Consolas,monospace;font-size:13.5px;text-align:right}
+  input[type=range]{
+    -webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:2px;
+    background:#2e3950;outline:none;cursor:pointer;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;appearance:none;width:15px;height:15px;border-radius:50%;
+    background:var(--blue);border:2px solid #0d1117;cursor:pointer;
+  }
+  input[type=range]::-moz-range-thumb{
+    width:13px;height:13px;border-radius:50%;background:var(--blue);border:2px solid #0d1117;cursor:pointer;
+  }
+  .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  button{
+    background:#202938;border:1px solid #344158;color:var(--text);border-radius:8px;
+    padding:8px 14px;font:inherit;font-size:14px;cursor:pointer;
+  }
+  button:hover:not(:disabled){border-color:var(--blue)}
+  button:disabled{opacity:.45;cursor:default}
+  button.primary{background:#1f3a5f;border-color:#2d68b8}
+  button.warm{background:#3d2a16;border-color:#7a5226}
+  button.warm:hover:not(:disabled){border-color:var(--orange)}
+  .epoch{font-size:13.5px;color:var(--muted);margin-top:12px}
+  .epoch b{color:var(--text)}
+  .logCard{display:flex;flex-direction:column}
+  .logHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .logHead h2{margin:0}
+  .logHead button{padding:4px 10px;font-size:12.5px}
+  .log{
+    background:#0e131b;border:1px solid var(--border);border-radius:8px;
+    height:330px;overflow-y:auto;padding:10px 12px;
+    font-size:12.8px;line-height:1.8;
+  }
+  .log .ll{overflow-wrap:break-word}
+  .log .lf{color:#c8d2de}
+  .log .lb{color:var(--orange)}
+  .log .le{color:var(--green);font-weight:650}
+  .log .li{color:#5b6878}
+  .explain{margin-top:16px}
+  .explain p{margin:8px 0;color:#c2cdda;max-width:1000px}
+  .explain .vid{color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<header class="top">
+  <a href="../../index.html">← все визуализации</a>
+  <span class="crumb">04 · Backpropagation <span class="en">(обратное распространение ошибки)</span></span>
+</header>
+<main>
+  <h1>Как ошибка течёт назад по графу</h1>
+  <p class="lead">
+    Вычислительный граф (computational graph) одного нейрона с tanh — как в micrograd у Карпатого:
+    <span class="mono">L = (tanh(x1·w1 + x2·w2 + b) − y)²</span>.
+    Forward считает значения слева направо, backward разносит градиенты справа налево по
+    chain rule (правилу цепочки). <span style="color:var(--orange)">Оранжевый grad</span> у узла — это ∂L/∂узел.
+  </p>
+
+  <div class="card">
+    <h2>Вычислительный граф (computational graph)</h2>
+    <svg id="g" viewBox="0 0 950 470" aria-label="Вычислительный граф нейрона"></svg>
+    <div class="legend">
+      <span class="p">Синяя пунктирная рамка</span> — обучаемые параметры (trainable parameters): w1, w2, b.
+      <span class="g">grad</span> — градиент ∂L/∂узел, появляется после Backward.
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Управление</h2>
+      <div class="row"><label for="sx1">x1 (вход)</label><input type="range" id="sx1" min="-2" max="2" step="0.05" value="0.8"><output id="vx1"></output></div>
+      <div class="row"><label for="sx2">x2 (вход)</label><input type="range" id="sx2" min="-2" max="2" step="0.05" value="0.2"><output id="vx2"></output></div>
+      <div class="row"><label for="sy">y (цель, target)</label><input type="range" id="sy" min="-1" max="1" step="0.05" value="-0.5"><output id="vy"></output></div>
+      <div class="row"><label for="sEta">η (learning rate)</label><input type="range" id="sEta" min="0.01" max="1.5" step="0.01" value="0.2"><output id="vEta"></output></div>
+      <div class="btns">
+        <button id="bFwd" class="primary">Forward →</button>
+        <button id="bBwd" class="warm">← Backward</button>
+        <button id="bTrain">⟳ Шаг обучения</button>
+        <button id="bRand">🎲 Случайные веса</button>
+      </div>
+      <div class="epoch">эпоха (epoch): <b id="epochN">0</b> · после «Шага обучения» смотри в лог — loss падает</div>
+    </div>
+
+    <div class="card logCard">
+      <div class="logHead">
+        <h2>Лог вычислений</h2>
+        <button id="bClear">очистить</button>
+      </div>
+      <div class="log mono" id="log"></div>
+    </div>
+  </div>
+
+  <section class="card explain">
+    <h2>Что здесь происходит</h2>
+    <p>
+      Backpropagation отвечает на вопрос: насколько каждый параметр виноват в ошибке?
+      Forward строит граф и запоминает все промежуточные значения (value), а backward идёт по нему
+      справа налево и перемножает локальные производные по chain rule: ∇z = ∇a·(1−a²),
+      ∇w1 = ∇z·x1 и так далее — градиент каждого узла говорит, на сколько вырастет loss, если этот
+      узел чуть увеличить. Дальше шаг градиентного спуска с прошлой страницы: каждый параметр
+      сдвигается против своего градиента, w ← w − η·∇w. Нажимай «Шаг обучения» несколько раз подряд
+      и смотри в лог: a подтягивается к цели y, а L тает с каждой эпохой. Это в точности то, что
+      делает micrograd — и то, что PyTorch делает с миллиардами узлов при вызове loss.backward().
+    </p>
+    <p class="vid">
+      📺 К видео: Karpathy — «The spelled-out intro to neural networks and backpropagation: building micrograd»
+      (этот граф — оттуда) и 3Blue1Brown — главы 3–4: «What is backpropagation really doing?» и «Backpropagation calculus».
+    </p>
+  </section>
+</main>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const SVGNS = 'http://www.w3.org/2000/svg';
+
+function fmt(v){
+  if (!isFinite(v)) return v > 0 ? '∞' : '−∞';
+  let r = Math.round(v * 100) / 100;
+  if (Object.is(r, -0) || r === 0) r = 0;
+  return r < 0 ? '−' + Math.abs(r).toFixed(2) : r.toFixed(2);
+}
+const par = v => v < 0 ? '(' + fmt(v) + ')' : fmt(v);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ---------- состояние ----------
+const V = { x1:0.8, w1:0.7, x2:0.2, w2:-0.4, b:0.1, y:-0.5 }; // листья графа
+let val = {};    // m1, m2, z, a, L — появляются после forward
+let grad = {};   // ∇ для каждого узла — появляются после backward
+let epoch = 0;
+let busy = false;
+const eta = () => parseFloat($('sEta').value);
+const computed = () => val.L !== undefined;
+
+// ---------- описание графа ----------
+const NW = 128, NH = 68;
+const NODES = {
+  x1:{x:12, y:14,  label:'x1 — вход',            kind:'leaf'},
+  w1:{x:12, y:96,  label:'w1 — параметр',        kind:'param'},
+  x2:{x:12, y:192, label:'x2 — вход',            kind:'leaf'},
+  w2:{x:12, y:274, label:'w2 — параметр',        kind:'param'},
+  b: {x:12, y:366, label:'b — параметр',         kind:'param'},
+  m1:{x:240,y:55,  label:'m1 = x1·w1',           kind:'op'},
+  m2:{x:240,y:233, label:'m2 = x2·w2',           kind:'op'},
+  z: {x:455,y:170, label:'z = m1+m2+b',          kind:'op'},
+  a: {x:645,y:170, label:'a = tanh(z)',          kind:'op'},
+  y: {x:645,y:320, label:'y — цель (target)',    kind:'leaf'},
+  L: {x:810,y:170, label:'L = (a−y)²',           kind:'op'},
+};
+const EDGES = [
+  ['x1','m1'],['w1','m1'],['x2','m2'],['w2','m2'],
+  ['m1','z'],['m2','z'],['b','z'],['z','a'],['a','L'],['y','L'],
+];
+const nodeEl = {}, edgeEl = {};
+
+(function build(){
+  const svg = $('g');
+  const defs = document.createElementNS(SVGNS,'defs');
+  defs.innerHTML = '<marker id="arr" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">' +
+                   '<path d="M0,0 L10,5 L0,10 z" fill="#45526b"></path></marker>';
+  svg.appendChild(defs);
+  // входные точки на левой грани узла-приёмника (раскладываем по вертикали)
+  const incoming = {};
+  for (const [s,d] of EDGES) (incoming[d] = incoming[d] || []).push(s);
+  const entryY = (d, s) => {
+    const list = incoming[d], i = list.indexOf(s), cy = NODES[d].y + NH/2;
+    if (list.length === 1) return cy;
+    const span = Math.min(34, 14 * (list.length - 1));
+    return cy - span/2 + i * (span / (list.length - 1));
+  };
+  for (const [s,d] of EDGES){
+    const sx = NODES[s].x + NW, sy = NODES[s].y + NH/2;
+    const tx = NODES[d].x, ty = entryY(d, s);
+    const p = document.createElementNS(SVGNS,'path');
+    const dx = Math.max(30, (tx - sx) * 0.45);
+    p.setAttribute('d', `M ${sx} ${sy} C ${sx+dx} ${sy}, ${tx-dx} ${ty}, ${tx} ${ty}`);
+    p.setAttribute('fill','none'); p.setAttribute('stroke','#45526b'); p.setAttribute('stroke-width','1.6');
+    p.setAttribute('marker-end','url(#arr)');
+    p.classList.add('edge');
+    svg.appendChild(p);
+    edgeEl[s + '>' + d] = p;
+  }
+  for (const [k,n] of Object.entries(NODES)){
+    const g = document.createElementNS(SVGNS,'g');
+    const r = document.createElementNS(SVGNS,'rect');
+    r.setAttribute('x',n.x); r.setAttribute('y',n.y); r.setAttribute('width',NW); r.setAttribute('height',NH);
+    r.setAttribute('rx',10); r.setAttribute('fill','#1b2330');
+    r.classList.add('nbox');
+    if (n.kind === 'param'){ r.setAttribute('stroke','#2d68b8'); r.setAttribute('stroke-width','1.8'); r.setAttribute('stroke-dasharray','5 3'); }
+    else { r.setAttribute('stroke','#3a465c'); r.setAttribute('stroke-width','1.4'); }
+    g.appendChild(r);
+    const t1 = document.createElementNS(SVGNS,'text');
+    t1.setAttribute('x',n.x+10); t1.setAttribute('y',n.y+17); t1.setAttribute('font-size','11.5');
+    t1.setAttribute('fill', n.kind === 'param' ? '#79b8ff' : '#8b98ab');
+    t1.textContent = n.label;
+    g.appendChild(t1);
+    const t2 = document.createElementNS(SVGNS,'text');
+    t2.setAttribute('x',n.x+10); t2.setAttribute('y',n.y+38); t2.setAttribute('font-size','13.5');
+    t2.innerHTML = '<tspan fill="#5b6878" font-size="11">val </tspan><tspan id="val_'+k+'" fill="#e7edf4" font-weight="700"></tspan>';
+    g.appendChild(t2);
+    const t3 = document.createElementNS(SVGNS,'text');
+    t3.setAttribute('x',n.x+10); t3.setAttribute('y',n.y+57); t3.setAttribute('font-size','13');
+    t3.innerHTML = '<tspan fill="#5b6878" font-size="11">grad </tspan><tspan id="grad_'+k+'" fill="#ffa657"></tspan>';
+    g.appendChild(t3);
+    svg.appendChild(g);
+    nodeEl[k] = r;
+  }
+})();
+
+// ---------- отрисовка значений ----------
+function nodeValue(k){
+  if (k in V) return V[k];
+  return (k in val) ? val[k] : null;
+}
+function render(){
+  for (const k of Object.keys(NODES)){
+    const v = nodeValue(k);
+    const vt = document.getElementById('val_' + k);
+    vt.textContent = v === null ? '?' : fmt(v);
+    if (NODES[k].kind === 'param') vt.setAttribute('fill', v < 0 ? '#f0564f' : '#58a6ff');
+    else vt.setAttribute('fill', v === null ? '#5b6878' : '#e7edf4');
+    document.getElementById('grad_' + k).textContent = (k in grad) ? fmt(grad[k]) : '—';
+  }
+  $('vx1').textContent = fmt(V.x1); $('vx2').textContent = fmt(V.x2);
+  $('vy').textContent = fmt(V.y);   $('vEta').textContent = fmt(eta());
+  $('epochN').textContent = epoch;
+  $('bBwd').disabled = busy || !computed();
+  $('bFwd').disabled = busy; $('bTrain').disabled = busy; $('bRand').disabled = busy;
+}
+
+// ---------- подсветка ----------
+let litNodes = [], litEdges = [];
+function clearLit(){
+  litNodes.forEach(n => n.classList.remove('lit','litg'));
+  litEdges.forEach(e => e.classList.remove('ehot','ehotg'));
+  litNodes = []; litEdges = [];
+}
+function light(k, back){
+  clearLit();
+  nodeEl[k].classList.add(back ? 'litg' : 'lit');
+  litNodes.push(nodeEl[k]);
+  for (const [s,d] of EDGES){
+    // forward: подсвечиваем рёбра, входящие в узел; backward: рёбра, по которым градиент пришёл из потребителей
+    if ((!back && d === k) || (back && s === k)){
+      const e = edgeEl[s + '>' + d];
+      e.classList.add(back ? 'ehotg' : 'ehot');
+      litEdges.push(e);
+    }
+  }
+}
+
+// ---------- лог ----------
+function log(text, cls){
+  const d = document.createElement('div');
+  d.className = 'll ' + (cls || 'lf');
+  d.textContent = text;
+  const el = $('log');
+  el.appendChild(d);
+  while (el.children.length > 400) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+$('bClear').addEventListener('click', () => { $('log').innerHTML = ''; });
+
+// ---------- forward: шаги с честными формулами ----------
+const FSTEPS = [
+  { k:'m1', run(){ val.m1 = V.x1 * V.w1;
+      return `m1 = x1·w1 = ${par(V.x1)}·${par(V.w1)} = ${fmt(val.m1)}`; } },
+  { k:'m2', run(){ val.m2 = V.x2 * V.w2;
+      return `m2 = x2·w2 = ${par(V.x2)}·${par(V.w2)} = ${fmt(val.m2)}`; } },
+  { k:'z',  run(){ val.z = val.m1 + val.m2 + V.b;
+      return `z = m1 + m2 + b = ${fmt(val.m1)} + ${par(val.m2)} + ${par(V.b)} = ${fmt(val.z)}`; } },
+  { k:'a',  run(){ val.a = Math.tanh(val.z);
+      return `a = tanh(z) = tanh(${fmt(val.z)}) = ${fmt(val.a)}`; } },
+  { k:'L',  run(){ val.L = (val.a - V.y) ** 2;
+      return `L = (a − y)² = (${fmt(val.a)} − ${par(V.y)})² = ${fmt(val.L)}`; } },
+];
+
+// ---------- backward: chain rule с честными формулами ----------
+const BSTEPS = [
+  { k:'L',  run(){ grad.L = 1;
+      return `∇L = ∂L/∂L = 1.00 — стартуем с конца`; } },
+  { k:'a',  run(){ grad.a = 2 * (val.a - V.y);
+      return `∇a = 2·(a − y) = 2·(${fmt(val.a)} − ${par(V.y)}) = ${fmt(grad.a)}`; } },
+  { k:'z',  run(){ grad.z = grad.a * (1 - val.a * val.a);
+      return `∇z = ∇a·(1 − a²) = ${par(grad.a)}·${par(1 - val.a * val.a)} = ${fmt(grad.z)}`; } },
+  { k:'m1', run(){ grad.m1 = grad.z;
+      return `∇m1 = ∇z·∂z/∂m1 = ${par(grad.z)}·1 = ${fmt(grad.m1)}`; } },
+  { k:'m2', run(){ grad.m2 = grad.z;
+      return `∇m2 = ∇z·1 = ${fmt(grad.m2)}`; } },
+  { k:'b',  run(){ grad.b = grad.z;
+      return `∇b = ∇z·1 = ${fmt(grad.b)}`; } },
+  { k:'w1', run(){ grad.w1 = grad.m1 * V.x1;
+      return `∇w1 = ∇m1·x1 = ${par(grad.m1)}·${par(V.x1)} = ${fmt(grad.w1)}`; } },
+  { k:'x1', run(){ grad.x1 = grad.m1 * V.w1;
+      return `∇x1 = ∇m1·w1 = ${par(grad.m1)}·${par(V.w1)} = ${fmt(grad.x1)}`; } },
+  { k:'w2', run(){ grad.w2 = grad.m2 * V.x2;
+      return `∇w2 = ∇m2·x2 = ${par(grad.m2)}·${par(V.x2)} = ${fmt(grad.w2)}`; } },
+  { k:'x2', run(){ grad.x2 = grad.m2 * V.w2;
+      return `∇x2 = ∇m2·w2 = ${par(grad.m2)}·${par(V.w2)} = ${fmt(grad.x2)}`; } },
+];
+
+async function runSteps(steps, back, animate){
+  for (const s of steps){
+    const line = s.run();
+    if (animate){
+      light(s.k, back);
+      log(line, back ? 'lb' : 'lf');
+      render();
+      await sleep(550);
+    }
+  }
+  if (animate) clearLit();
+}
+
+// ---------- кнопки ----------
+$('bFwd').addEventListener('click', async () => {
+  if (busy) return;
+  busy = true; render();
+  val = {}; grad = {};
+  log('— forward: считаем значения слева направо —', 'li');
+  await runSteps(FSTEPS, false, true);
+  busy = false; render();
+});
+
+$('bBwd').addEventListener('click', async () => {
+  if (busy || !computed()) return;
+  busy = true; render();
+  grad = {};
+  log('— backward: разносим градиенты справа налево (chain rule) —', 'li');
+  await runSteps(BSTEPS, true, true);
+  busy = false; render();
+});
+
+$('bTrain').addEventListener('click', () => {
+  if (busy) return;
+  val = {}; grad = {};
+  FSTEPS.forEach(s => s.run());          // forward без анимации
+  BSTEPS.forEach(s => s.run());          // backward без анимации
+  const Lold = val.L, e = eta();
+  V.w1 -= e * grad.w1;
+  V.w2 -= e * grad.w2;
+  V.b  -= e * grad.b;
+  epoch += 1;
+  val = {}; grad = {};                   // градиенты от старых весов больше не актуальны
+  FSTEPS.forEach(s => s.run());          // forward с обновлёнными весами — виден новый loss
+  log(`Эпоха ${epoch}: L = ${fmt(Lold)} → ${fmt(val.L)}   (w ← w − ${fmt(e)}·∇w)`, 'le');
+  clearLit(); render();
+});
+
+$('bRand').addEventListener('click', () => {
+  if (busy) return;
+  const r = lim => Math.round((Math.random()*2 - 1) * lim * 100) / 100;
+  V.w1 = r(1); V.w2 = r(1); V.b = r(0.5);
+  val = {}; grad = {}; epoch = 0;
+  log(`— случайные веса: w1 = ${fmt(V.w1)}, w2 = ${fmt(V.w2)}, b = ${fmt(V.b)}; эпохи обнулены —`, 'li');
+  clearLit(); render();
+});
+
+// слайдеры: входы/цель меняют граф — старые значения и градиенты сбрасываются
+const bind = (id, key) => $(id).addEventListener('input', () => {
+  V[key] = parseFloat($(id).value);
+  if (computed() || Object.keys(grad).length){ val = {}; grad = {}; clearLit(); }
+  render();
+});
+bind('sx1','x1'); bind('sx2','x2'); bind('sy','y');
+$('sEta').addEventListener('input', render);
+
+log('Нажми «Forward →», чтобы вычислить граф слева направо, затем «← Backward» — увидишь chain rule в действии.', 'li');
+render();
+</script>
+</body>
+</html>
