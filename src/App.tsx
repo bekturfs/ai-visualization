@@ -3,6 +3,7 @@ import { Routes, Route } from "react-router-dom";
 import Home from "./pages/Home";
 
 const BigPicture = lazy(() => import("./pages/BigPicture"));
+const Roles = lazy(() => import("./pages/Roles"));
 const Neuron = lazy(() => import("./pages/Neuron"));
 const ForwardPass = lazy(() => import("./pages/ForwardPass"));
 const GradientDescent = lazy(() => import("./pages/GradientDescent"));
@@ -22,6 +23,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/big-picture" element={<BigPicture />} />
+        <Route path="/roles" element={<Roles />} />
         <Route path="/neuron" element={<Neuron />} />
         <Route path="/forward-pass" element={<ForwardPass />} />
         <Route path="/gradient-descent" element={<GradientDescent />} />

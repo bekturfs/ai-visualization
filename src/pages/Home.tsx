@@ -208,6 +208,36 @@ export default function Home() {
         </Link>
       </motion.div>
 
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.18 }}
+        className="mt-4"
+      >
+        <Link
+          to="/roles"
+          className="group flex items-center gap-5 rounded-2xl border border-edge bg-panel px-6 py-4 no-underline transition-all hover:-translate-y-0.5 hover:border-accent"
+        >
+          <span className="text-[26px]">🧩</span>
+          <div>
+            <div className="text-[16px] font-semibold text-ink">
+              Шпаргалка: кто за что отвечает{" "}
+              <span className="text-[13px] font-normal text-muted">
+                (what each part does)
+              </span>
+            </div>
+            <p className="m-0 mt-0.5 max-w-[760px] text-[13.5px] leading-normal text-soft">
+              Вход, вес, bias, активация, слой, loss, градиент, backprop — роль
+              каждой детали простыми словами на одном житейском примере:
+              «брать ли зонт?». С живыми числами.
+            </p>
+          </div>
+          <span className="ml-auto text-2xl text-faint transition-transform group-hover:translate-x-1 group-hover:text-accent max-md:hidden">
+            →
+          </span>
+        </Link>
+      </motion.div>
+
       <h2 className="mb-3.5 mt-9 text-[13px] font-semibold uppercase tracking-[0.08em] text-muted">
         Блок 1 · Основы нейросетей (neural network fundamentals)
       </h2>

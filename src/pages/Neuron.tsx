@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link as RouterLink } from "react-router-dom";
 import { motion } from "motion/react";
 import {
   Layout,
@@ -341,10 +342,16 @@ export default function Neuron() {
         Что вычисляет один нейрон
       </h1>
       <p className="mb-4 max-w-[900px] text-muted">
-        Нейрон делает две вещи: считает взвешенную сумму входов{" "}
-        <code className="font-mono">z = w1·x1 + w2·x2 + w3·x3 + b</code> и
-        пропускает её через функцию активации:{" "}
-        <code className="font-mono">a = f(z)</code>.
+        <b className="text-ink">Нейрон отвечает за одно микро-решение:</b>{" "}
+        посмотреть на входящие факты и сказать одним числом, насколько он «за».
+        Для этого он взвешивает факты по важности (это сумма{" "}
+        <code className="font-mono">z = w·x + b</code>) и переводит счёт в
+        уверенность (активация <code className="font-mono">a = f(z)</code>).
+        Запутался в деталях? Есть{" "}
+        <RouterLink to="/roles" className="text-accent underline decoration-dotted underline-offset-4">
+          🧩 шпаргалка «кто за что отвечает»
+        </RouterLink>{" "}
+        на примере зонта.
       </p>
 
       <StoryPanel
