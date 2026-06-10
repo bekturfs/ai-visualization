@@ -10,6 +10,7 @@ const GradientDescent = lazy(() => import("./pages/GradientDescent"));
 const Backprop = lazy(() => import("./pages/Backprop"));
 const Tokenization = lazy(() => import("./pages/Tokenization"));
 const Embeddings = lazy(() => import("./pages/Embeddings"));
+const Attention = lazy(() => import("./pages/Attention"));
 
 function Loading() {
   return (
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="/backpropagation" element={<Backprop />} />
         <Route path="/tokenization" element={<Tokenization />} />
         <Route path="/embeddings" element={<Embeddings />} />
+        <Route path="/attention" element={<Attention />} />
       </Routes>
     </Suspense>
   );

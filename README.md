@@ -23,7 +23,7 @@ Every topic is built as a **step-by-step story in plain language** (with real-li
 ### 2. How LLMs Work
 - [x] [Tokenization](src/pages/Tokenization.tsx) — a real BPE tokenizer trained in the browser on the built-in corpus: watch a word merge from letters, inspect the learned merge table, tokenize any text and see the token-vs-letters savings
 - [x] [Embeddings](src/pages/Embeddings.tsx) — an honest semantic map: co-occurrence + PPMI vectors computed live from the corpus, projected to 2D; click words to see nearest neighbors, compare any pair by cosine similarity
-- [ ] Attention mechanism — what "tokens looking at each other" means
+- [x] [Attention mechanism](src/pages/Attention.tsx) — words looking at each other with honest weights (embedding similarity + softmax): attention beams, the full attention matrix, meaning-as-mixture preview, causal mask toggle and a softmax sharpness slider
 - [ ] Transformer architecture — the full picture, layer by layer
 - [ ] Next-token prediction — probability distribution over the vocabulary
 - [ ] Sampling — temperature, top-p, top-k and how they change output

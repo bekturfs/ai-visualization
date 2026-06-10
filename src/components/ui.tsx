@@ -16,6 +16,7 @@ export const ROUTE_ORDER = [
   { to: "/backpropagation", num: "04", label: "Backpropagation" },
   { to: "/tokenization", num: "05", label: "Токенизация (BPE)" },
   { to: "/embeddings", num: "06", label: "Эмбеддинги" },
+  { to: "/attention", num: "07", label: "Механизм внимания" },
 ];
 
 function PrevNext({ pathname }: { pathname: string }) {
@@ -69,7 +70,7 @@ function PrevNext({ pathname }: { pathname: string }) {
             🏁 маршрут пройден
           </div>
           <div className="text-[14.5px] font-semibold text-ink">
-            На главную — дальше attention (скоро)
+            На главную — дальше transformer (скоро)
           </div>
         </Link>
       )}
