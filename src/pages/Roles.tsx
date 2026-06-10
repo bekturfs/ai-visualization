@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "motion/react";
-import { Layout, Card, SliderRow, AnimatedNumber } from "../components/ui";
+import { Layout, Card, SliderRow } from "../components/ui";
 import { FlowDots } from "../components/FlowDots";
 import { fmt } from "../lib/format";
 
@@ -461,7 +461,7 @@ export default function Roles() {
               {take ? "берём" : "не берём"}
             </text>
             <text x={505} y={N.y + 28} textAnchor="middle" fontSize="11" fill="#8b98ab">
-              уверенность <AnimatedNumber value={a * 100} digits={0} />%
+              уверенность {(a * 100).toFixed(0)}%
             </text>
           </svg>
 
