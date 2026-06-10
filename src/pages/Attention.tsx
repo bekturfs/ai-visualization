@@ -372,7 +372,21 @@ export default function Attention() {
                 </text>
               ))}
               {words.map((wi, i) => (
-                <g key={`r${i}`} onClick={() => pick(i)} style={{ cursor: "pointer" }}>
+                <g
+                  key={`r${i}`}
+                  onClick={() => pick(i)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      pick(i);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`строка «${wi}» — показать её внимание`}
+                  aria-pressed={i === sel}
+                  style={{ cursor: "pointer", outline: "none" }}
+                >
                   <text
                     x={102}
                     y={64 + i * 40 + 20}
