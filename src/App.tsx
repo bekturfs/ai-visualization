@@ -8,6 +8,8 @@ const Neuron = lazy(() => import("./pages/Neuron"));
 const ForwardPass = lazy(() => import("./pages/ForwardPass"));
 const GradientDescent = lazy(() => import("./pages/GradientDescent"));
 const Backprop = lazy(() => import("./pages/Backprop"));
+const Tokenization = lazy(() => import("./pages/Tokenization"));
+const Embeddings = lazy(() => import("./pages/Embeddings"));
 
 function Loading() {
   return (
@@ -28,6 +30,8 @@ export default function App() {
         <Route path="/forward-pass" element={<ForwardPass />} />
         <Route path="/gradient-descent" element={<GradientDescent />} />
         <Route path="/backpropagation" element={<Backprop />} />
+        <Route path="/tokenization" element={<Tokenization />} />
+        <Route path="/embeddings" element={<Embeddings />} />
       </Routes>
     </Suspense>
   );
