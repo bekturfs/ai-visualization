@@ -1,5 +1,6 @@
 /** Числа в формулах: 2 знака, настоящий минус, без «−0.00». */
 export function fmt(v: number, digits = 2): string {
+  if (Number.isNaN(v)) return "—";
   if (!isFinite(v)) return v > 0 ? "∞" : "−∞";
   const m = 10 ** digits;
   let r = Math.round(v * m) / m;

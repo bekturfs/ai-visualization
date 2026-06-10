@@ -1,8 +1,15 @@
 // Скриншоты всех страниц + сбор ошибок консоли (для ручной проверки вёрстки).
+// Переменные окружения: CHROME_PATH — бинарь Chromium, OUT_DIR — куда класть
+// скриншоты, BASE_URL — адрес запущенного `npm run preview`.
+import { mkdirSync } from "node:fs";
 import { chromium } from "playwright-core";
 
-const BASE = "http://localhost:4173";
-const exe = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
+const BASE = process.env.BASE_URL ?? "http://localhost:4173";
+const exe =
+  process.env.CHROME_PATH ??
+  "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
+const OUT = process.env.OUT_DIR ?? "/tmp/shots";
+mkdirSync(OUT, { recursive: true });
 
 const shots = [
   { name: "home", url: "/#/", wait: 1200 },
@@ -27,7 +34,7 @@ page.on("pageerror", (e) => errors.push("PAGEERROR: " + String(e).slice(0, 300))
 for (const s of shots) {
   await page.goto(BASE + s.url, { waitUntil: "networkidle" });
   await page.waitForTimeout(s.wait);
-  await page.screenshot({ path: `/tmp/shots/${s.name}.png`, fullPage: true });
+  await page.screenshot({ path: `${OUT}/${s.name}.png`, fullPage: true });
   console.log("shot:", s.name);
 }
 
@@ -38,7 +45,7 @@ for (let i = 0; i < 7; i++) {
   await page.waitForTimeout(250);
 }
 await page.waitForTimeout(800);
-await page.screenshot({ path: "/tmp/shots/neuron-sandbox.png", fullPage: true });
+await page.screenshot({ path: `${OUT}/neuron-sandbox.png`, fullPage: true });
 console.log("shot: neuron-sandbox");
 
 // forward: песочница + волна + клик по нейрону
@@ -48,7 +55,7 @@ await page.getByRole("button", { name: "▶ Прогнать волну" }).clic
 await page.waitForTimeout(2300);
 await page.locator("svg circle").nth(3).click({ force: true });
 await page.waitForTimeout(600);
-await page.screenshot({ path: "/tmp/shots/forward-sandbox.png", fullPage: true });
+await page.screenshot({ path: `${OUT}/forward-sandbox.png`, fullPage: true });
 console.log("shot: forward-sandbox");
 
 // gd: песочница, несколько шагов
@@ -60,7 +67,7 @@ for (let i = 0; i < 6; i++) {
   await page.waitForTimeout(280);
 }
 await page.waitForTimeout(900);
-await page.screenshot({ path: "/tmp/shots/gd-sandbox.png", fullPage: true });
+await page.screenshot({ path: `${OUT}/gd-sandbox.png`, fullPage: true });
 console.log("shot: gd-sandbox");
 
 // backprop: песочница, forward + backward + обучение
@@ -75,7 +82,7 @@ for (let i = 0; i < 4; i++) {
   await page.waitForTimeout(200);
 }
 await page.waitForTimeout(600);
-await page.screenshot({ path: "/tmp/shots/backprop-sandbox.png", fullPage: true });
+await page.screenshot({ path: `${OUT}/backprop-sandbox.png`, fullPage: true });
 console.log("shot: backprop-sandbox");
 
 console.log("CONSOLE ERRORS:", errors.length ? errors : "none");

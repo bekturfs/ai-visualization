@@ -43,6 +43,16 @@ export function StoryPanel({
   useEffect(() => {
     if (step === null) return;
     const h = (e: KeyboardEvent) => {
+      // не перехватываем стрелки, когда фокус в слайдере или другом поле ввода
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT" ||
+          t.isContentEditable)
+      )
+        return;
       if (e.key === "ArrowRight") next();
       if (e.key === "ArrowLeft") prev();
     };

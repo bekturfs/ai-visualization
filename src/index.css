@@ -73,3 +73,9 @@ svg text {
   font-family: var(--font-mono);
   user-select: none;
 }
+
+/* видимый фокус для интерактивных узлов внутри SVG (клавиатурная навигация) */
+svg g[role="button"]:focus-visible circle {
+  stroke: var(--color-amber);
+  stroke-width: 3;
+}

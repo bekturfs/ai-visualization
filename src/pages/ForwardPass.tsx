@@ -279,17 +279,30 @@ export default function ForwardPass() {
     const norm = v === null ? 0 : isInput ? (v + 1) / 2 : v;
     const n = Math.min(Math.max(norm, 0), 1);
     const sel = selected === id;
+    const toggle = () => {
+      setSelected((s) => (s === id ? null : (id as NodeId)));
+      setPeeked(true);
+    };
     return (
       <g
-        onClick={
+        onClick={clickable ? toggle : undefined}
+        onKeyDown={
           clickable
-            ? () => {
-                setSelected((s) => (s === id ? null : (id as NodeId)));
-                setPeeked(true);
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggle();
+                }
               }
             : undefined
         }
-        style={{ cursor: clickable ? "pointer" : "default" }}
+        tabIndex={clickable ? 0 : undefined}
+        role={clickable ? "button" : undefined}
+        aria-label={
+          clickable ? `нейрон ${label} — показать его формулу` : undefined
+        }
+        aria-pressed={clickable ? sel : undefined}
+        style={{ cursor: clickable ? "pointer" : "default", outline: "none" }}
       >
         <motion.circle
           cx={p.x}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import {
   Layout,
@@ -58,7 +58,7 @@ const ACT: Record<
 
 function ActPlot({ act, z, a }: { act: ActName; z: number; a: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
+  const draw = useCallback(() => {
     const cv = ref.current;
     if (!cv) return;
     const ctx = cv.getContext("2d")!;
@@ -156,7 +156,14 @@ function ActPlot({ act, z, a }: { act: ActName; z: number; a: number }) {
       X(zc) + (X(zc) > W - 110 ? -10 : 10),
       Y(ac) - 9,
     );
-  });
+  }, [act, z, a]);
+  useEffect(() => draw(), [draw]);
+  useEffect(() => {
+    if (!ref.current) return;
+    const ro = new ResizeObserver(() => draw());
+    ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, [draw]);
   return <canvas ref={ref} className="block h-[260px] w-full" />;
 }
 

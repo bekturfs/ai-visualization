@@ -169,6 +169,14 @@ export default function Backprop() {
   const logRef = useRef<HTMLDivElement>(null);
   const aliveRef = useRef(true);
   useEffect(() => () => { aliveRef.current = false; }, []);
+  // зеркала состояния для обработчиков, вызываемых из таймеров:
+  // апдейтеры setState должны оставаться чистыми (без side-эффектов)
+  const vRef = useRef(V);
+  vRef.current = V;
+  const epochRef = useRef(epoch);
+  epochRef.current = epoch;
+  const valRef = useRef(val);
+  valRef.current = val;
 
   const story = useStory(STEPS.length);
   const st = story.step;
@@ -228,7 +236,8 @@ export default function Backprop() {
     setBusy(true);
     setVal({});
     setGrad({});
-    const f = forwardCalc(V);
+    const vv = vRef.current;
+    const f = forwardCalc(vv);
     if (animate) pushLog("— forward: считаем значения слева направо —", "li");
     const acc: Vals = {};
     for (const s of FSTEPS) {
@@ -236,7 +245,7 @@ export default function Backprop() {
       if (animate) {
         setLit({ node: s.k, back: false });
         setVal({ ...acc });
-        pushLog(s.line(V, f), "lf");
+        pushLog(s.line(vv, f), "lf");
         await sleep(560);
         if (!aliveRef.current) return;
       }
@@ -248,10 +257,11 @@ export default function Backprop() {
   };
 
   const runBackward = async () => {
-    if (busy || val.L === undefined) return;
+    if (busy || valRef.current.L === undefined) return;
     setBusy(true);
-    const f = forwardCalc(V);
-    const g = backwardCalc(V, f);
+    const vv = vRef.current;
+    const f = forwardCalc(vv);
+    const g = backwardCalc(vv, f);
     setGrad({});
     pushLog("— backward: разносим вину справа налево (chain rule) —", "li");
     const acc: Vals = {};
@@ -259,7 +269,7 @@ export default function Backprop() {
       acc[s.k] = g[s.k as keyof typeof g];
       setLit({ node: s.k, back: true });
       setGrad({ ...acc });
-      pushLog(s.line(V, f, g), "lb");
+      pushLog(s.line(vv, f, g), "lb");
       await sleep(560);
       if (!aliveRef.current) return;
     }
@@ -283,19 +293,18 @@ export default function Backprop() {
 
   const doTrain = () => {
     if (busy) return;
-    setV((vv) => {
-      const { nv, oldL, newL, nf } = trainStep(vv);
-      setEpoch((e) => e + 1);
-      setVal(nf);
-      setGrad({});
-      setLosses((l) => [...l.slice(-80), newL]);
-      pushLog(`Эпоха ${epoch + 1}: L = ${fmt(oldL)} → ${fmt(newL)}   (w ← w − ${fmt(eta)}·∇w)`, "le");
-      if (newL < 0.01) {
-        setTrainedLow(true);
-        if (targetMoved) setRetrained(true);
-      }
-      return nv;
-    });
+    const { nv, oldL, newL, nf } = trainStep(vRef.current);
+    const ne = epochRef.current + 1;
+    setV(nv);
+    setEpoch(ne);
+    setVal(nf);
+    setGrad({});
+    setLosses((l) => [...l.slice(-80), newL]);
+    pushLog(`Эпоха ${ne}: L = ${fmt(oldL)} → ${fmt(newL)}   (w ← w − ${fmt(eta)}·∇w)`, "le");
+    if (newL < 0.01) {
+      setTrainedLow(true);
+      if (targetMoved) setRetrained(true);
+    }
   };
 
   /* действия шагов истории */
@@ -311,8 +320,8 @@ export default function Backprop() {
       // forward мгновенно (если не посчитан), затем анимированный backward
       storyTimers.current.push(
         window.setTimeout(async () => {
-          if (val.L === undefined) {
-            setVal(forwardCalc(V));
+          if (valRef.current.L === undefined) {
+            setVal(forwardCalc(vRef.current));
             await sleep(200);
           }
           runBackward();

@@ -165,6 +165,7 @@ export default function BigPicture() {
 
   const timers = useRef<number[]>([]);
   const phaseRef = useRef<number | null>(null);
+  const choiceRef = useRef<Candidate | null>(null);
   const tempRef = useRef(temp);
   tempRef.current = temp;
   const clearTimers = () => {
@@ -204,6 +205,7 @@ export default function BigPicture() {
       setPhaseBoth(3);
       const pred = predict(ctx, tempRef.current);
       const c = sample(pred.candidates);
+      choiceRef.current = c;
       setFrozen(pred);
       setChoice(c);
       if (tempRef.current <= 0.15) setColdUsed(true);
@@ -211,14 +213,14 @@ export default function BigPicture() {
     });
     at(MS.pick, () => setPhaseBoth(4));
     at(MS.done, () => {
-      setChoice((c) => {
-        if (c) {
-          setContext((cc) => [...cc, c.word]);
-          setGenCount((g) => g + 1);
-          setTotal((t) => t + 1);
-        }
-        return null;
-      });
+      const c = choiceRef.current;
+      if (c) {
+        setContext((cc) => [...cc, c.word]);
+        setGenCount((g) => g + 1);
+        setTotal((t) => t + 1);
+      }
+      choiceRef.current = null;
+      setChoice(null);
       setFrozen(null);
       setPhaseBoth(null);
     });
@@ -240,6 +242,7 @@ export default function BigPicture() {
     clearTimers();
     setPhaseBoth(null);
     setRunning(false);
+    choiceRef.current = null;
     setChoice(null);
     setFrozen(null);
     setDeadEnd(false);
