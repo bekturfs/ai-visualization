@@ -6,15 +6,18 @@ Interactive visualizations for understanding how AI works — from neural networ
 
 Reading about AI is one thing; **seeing** it is another. The goal of this project is to learn everything related to AI by building visualizations of the core concepts — each one small, interactive, and focused on a single idea.
 
-> 🚧 Early stage: this is a learning roadmap. Visualizations will be checked off as they are built.
+Every topic is built as a **step-by-step story in plain language** (with real-life analogies, animations and 3D where it helps), followed by a free-play sandbox with hands-on challenges. All numbers on screen are computed live — nothing is pre-recorded.
 
 ## Roadmap
 
+### 0. The Big Picture
+- [x] [How AI writes an answer](src/pages/BigPicture.tsx) — the whole pipeline on one screen: text → tokens → numbers → network → probabilities → next word. Powered by a real tiny n-gram model trained in the browser on a built-in corpus, with honest probabilities, temperature lottery and several starter phrases. Built for non-programmers.
+
 ### 1. Neural Network Fundamentals
-- [ ] Neuron & activation functions — what a single neuron computes
-- [ ] Forward pass — how data flows through layers
-- [ ] Gradient descent — loss landscape and how the network learns
-- [ ] Backpropagation — how errors flow backwards
+- [x] [Neuron & activation functions](src/pages/Neuron.tsx) — what a single neuron computes: guided story, live signals flowing along the wires, honest formulas, challenges
+- [x] [Forward pass](src/pages/ForwardPass.tsx) — animated wave of computation rolling through a 2–3–2 network; click any neuron to see its personal formula
+- [x] [Gradient descent](src/pages/GradientDescent.tsx) — a real **3D loss landscape** (Three.js): orbit the valley, drop the ball anywhere, play with the learning rate, watch divergence and local minima traps
+- [x] [Backpropagation](src/pages/Backprop.tsx) — micrograd-style computational graph with an animated "blame flow" running backwards, training steps and a live loss curve
 
 ### 2. How LLMs Work
 - [ ] Tokenization — how text becomes tokens (BPE in action)
@@ -43,11 +46,53 @@ Reading about AI is one thing; **seeing** it is another. The goal of this projec
 
 ## Tech Stack
 
-To be decided — likely a web stack (interactive visualizations in the browser). Will be documented here once the first visualization is built.
+- **React 19 + TypeScript + Vite** — app shell and interactivity
+- **Three.js / react-three-fiber + drei** — 3D scenes (loss landscape)
+- **Motion (framer-motion)** — UI and SVG animations
+- **Tailwind CSS 4** — styling
+- Custom rAF-driven SVG particles for signal/gradient flows
+
+The UI is in Russian with key terms duplicated in English, since the visualizations are designed as companions to English-language videos (3Blue1Brown's neural networks series and Andrej Karpathy's "Neural Networks: Zero to Hero").
+
+## Getting Started
+
+```bash
+npm install
+npm run dev      # dev server
+npm run build    # production build (output in dist/)
+npm run preview  # serve the production build locally
+```
+
+## Deployment
+
+The site is fully static, so it deploys to GitHub Pages for free. A workflow
+(`.github/workflows/deploy.yml`) builds and publishes it on every push to
+`master`. One-time setup: repository **Settings → Pages → Source: GitHub
+Actions**. The site then lives at `https://<user>.github.io/ai-visualization/`.
+
+Hash-based routing and `base: "./"` mean the build also works on any other
+static host (Netlify, Vercel, Cloudflare Pages): build command `npm run build`,
+output directory `dist`.
 
 ## Project Structure
 
-One folder per visualization, each self-contained. Details will appear as the project grows.
+```
+src/
+  pages/                — one page per visualization + home
+    Neuron.tsx          — neuron & activation functions
+    ForwardPass.tsx     — forward pass through a 2–3–2 network
+    GradientDescent.tsx — 3D gradient descent on a loss landscape
+    Backprop.tsx        — backpropagation on a computational graph
+  components/
+    StoryMode.tsx       — the step-by-step guided story engine
+    FlowDots.tsx        — animated signal particles for SVG edges
+    ui.tsx              — shared cards, sliders, buttons, animated numbers
+  lib/                  — formatting and math helpers
+scripts/
+  shoot.mjs             — Playwright screenshot sweep used for visual checks
+```
+
+Each page follows the same pattern: a guided story (steps highlight parts of the scene and trigger animations) → a sandbox with live computation → hands-on challenges that check themselves.
 
 ## License
 

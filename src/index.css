@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0d1117;
+  --color-panel: #151b24;
+  --color-panel2: #1b2330;
+  --color-edge: #2b3444;
+  --color-ink: #e7edf4;
+  --color-soft: #c2cdda;
+  --color-muted: #8b98ab;
+  --color-faint: #5b6878;
+  --color-accent: #58a6ff;
+  --color-hot: #f0564f;
+  --color-amber: #ffa657;
+  --color-ok: #56d364;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+body {
+  @apply bg-bg text-ink font-sans antialiased;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+/* слайдеры в едином стиле проекта */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: #2e3950;
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  border: 2px solid #0d1117;
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.18);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  border: 2px solid #0d1117;
+  cursor: pointer;
+}
+input[type="range"].amber::-webkit-slider-thumb {
+  background: var(--color-amber);
+}
+input[type="range"].amber::-moz-range-thumb {
+  background: var(--color-amber);
+}
+
+svg text {
+  font-family: var(--font-mono);
+  user-select: none;
+}
+
+/* видимый фокус для интерактивных узлов внутри SVG (клавиатурная навигация) */
+svg g[role="button"]:focus-visible circle {
+  stroke: var(--color-amber);
+  stroke-width: 3;
+}
