@@ -378,10 +378,13 @@ export default function Backprop() {
         Как ошибка течёт назад по графу
       </h1>
       <p className="mb-4 max-w-[940px] text-muted">
-        Вычислительный граф одного нейрона с tanh — как в micrograd у Карпатого:{" "}
+        <b className="text-ink">Backpropagation отвечает за поиск виноватых:</b>{" "}
+        он раздаёт каждому весу его персональную долю вины в ошибке — чтобы
+        знать, кого и насколько подкручивать. Здесь вычислительный граф одного
+        нейрона с tanh, как в micrograd у Карпатого:{" "}
         <code className="font-mono">L = (tanh(x1·w1 + x2·w2 + b) − y)²</code>.{" "}
-        <span className="text-amber">Оранжевый grad</span> у узла — это ∂L/∂узел,
-        «вина» узла в ошибке.
+        <span className="text-amber">Оранжевый grad</span> у узла — это его
+        «вина».
       </p>
 
       <StoryPanel

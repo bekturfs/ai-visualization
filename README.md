@@ -12,6 +12,7 @@ Every topic is built as a **step-by-step story in plain language** (with real-li
 
 ### 0. The Big Picture
 - [x] [How AI writes an answer](src/pages/BigPicture.tsx) — the whole pipeline on one screen: text → tokens → numbers → network → probabilities → next word. Powered by a real tiny n-gram model trained in the browser on a built-in corpus, with honest probabilities, temperature lottery and several starter phrases. Built for non-programmers.
+- [x] [What each part does](src/pages/Roles.tsx) — a plain-language cheat sheet: the role of every building block (input, weight, bias, activation, layer, loss, gradient, learning rate, backprop, training loop) explained through one everyday example — "should I take an umbrella?" — with a live neuron whose numbers feed every card.
 
 ### 1. Neural Network Fundamentals
 - [x] [Neuron & activation functions](src/pages/Neuron.tsx) — what a single neuron computes: guided story, live signals flowing along the wires, honest formulas, challenges
