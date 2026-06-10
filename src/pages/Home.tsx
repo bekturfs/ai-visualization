@@ -37,13 +37,30 @@ const VIZ = [
   },
 ];
 
+const VIZ2 = [
+  {
+    to: "/tokenization",
+    num: "05",
+    title: "Токенизация",
+    en: "tokenization, BPE",
+    badge: "⚙️ настоящий BPE",
+    text: "Почему модель видит текст кусочками, а не словами и не буквами. Алгоритм BPE обучается прямо в браузере: смотри, как слово склеивается из букв.",
+  },
+  {
+    to: "/embeddings",
+    num: "06",
+    title: "Эмбеддинги",
+    en: "embeddings",
+    badge: "🗺 карта смыслов",
+    text: "Слова как точки: похожие по смыслу — рядом. Карта честно вычислена из корпуса; кликай по словам, смотри соседей и меряй похожесть числом.",
+  },
+];
+
 const SOON = [
   {
-    title: "2 · Как работают LLM",
+    title: "2 · Как работают LLM — продолжение",
     en: "how LLMs work",
     items: [
-      "Токенизация (tokenization) — BPE в действии",
-      "Эмбеддинги (embeddings) — слова как векторы",
       "Механизм внимания (attention)",
       "Архитектура трансформера (transformer)",
       "Предсказание следующего токена",
@@ -261,6 +278,41 @@ export default function Home() {
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 + i * 0.07 }}
+          >
+            <Link
+              to={v.to}
+              className="group flex h-full items-start gap-4 rounded-2xl border border-edge bg-panel px-5 py-[18px] no-underline transition-all hover:-translate-y-0.5 hover:border-accent hover:bg-panel2"
+            >
+              <div className="mt-0.5 rounded-lg border border-accent/35 bg-accent/10 px-2.5 py-1.5 font-mono text-[15px] font-bold leading-none text-accent">
+                {v.num}
+              </div>
+              <div>
+                <div className="text-[16.5px] font-semibold text-ink">
+                  {v.title}
+                </div>
+                <div className="mb-1 text-[13px] text-muted">{v.en}</div>
+                <span className="mb-2 inline-block rounded-full border border-edge bg-panel2 px-2 py-0.5 text-[11.5px] text-muted group-hover:border-accent/40 group-hover:text-accent">
+                  {v.badge}
+                </span>
+                <p className="m-0 text-[13.5px] leading-normal text-soft">
+                  {v.text}
+                </p>
+              </div>
+            </Link>
+          </motion.div>
+        ))}
+      </div>
+
+      <h2 className="mb-3.5 mt-9 text-[13px] font-semibold uppercase tracking-[0.08em] text-muted">
+        Блок 2 · Как работают LLM (how LLMs work)
+      </h2>
+      <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1">
+        {VIZ2.map((v, i) => (
+          <motion.div
+            key={v.to}
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15 + i * 0.07 }}
           >
             <Link
               to={v.to}

@@ -14,6 +14,8 @@ export const ROUTE_ORDER = [
   { to: "/forward-pass", num: "02", label: "Forward pass" },
   { to: "/gradient-descent", num: "03", label: "Градиентный спуск" },
   { to: "/backpropagation", num: "04", label: "Backpropagation" },
+  { to: "/tokenization", num: "05", label: "Токенизация (BPE)" },
+  { to: "/embeddings", num: "06", label: "Эмбеддинги" },
 ];
 
 function PrevNext({ pathname }: { pathname: string }) {
@@ -67,7 +69,7 @@ function PrevNext({ pathname }: { pathname: string }) {
             🏁 маршрут пройден
           </div>
           <div className="text-[14.5px] font-semibold text-ink">
-            На главную — дальше блок 2 (скоро)
+            На главную — дальше attention (скоро)
           </div>
         </Link>
       )}

@@ -21,8 +21,8 @@ Every topic is built as a **step-by-step story in plain language** (with real-li
 - [x] [Backpropagation](src/pages/Backprop.tsx) — micrograd-style computational graph with an animated "blame flow" running backwards, training steps and a live loss curve
 
 ### 2. How LLMs Work
-- [ ] Tokenization — how text becomes tokens (BPE in action)
-- [ ] Embeddings — words as vectors, semantic similarity in space
+- [x] [Tokenization](src/pages/Tokenization.tsx) — a real BPE tokenizer trained in the browser on the built-in corpus: watch a word merge from letters, inspect the learned merge table, tokenize any text and see the token-vs-letters savings
+- [x] [Embeddings](src/pages/Embeddings.tsx) — an honest semantic map: co-occurrence + PPMI vectors computed live from the corpus, projected to 2D; click words to see nearest neighbors, compare any pair by cosine similarity
 - [ ] Attention mechanism — what "tokens looking at each other" means
 - [ ] Transformer architecture — the full picture, layer by layer
 - [ ] Next-token prediction — probability distribution over the vocabulary
