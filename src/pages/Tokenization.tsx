@@ -7,6 +7,15 @@ import { CORPUS, tokenize } from "../lib/tinylm";
 
 const PALETTE = ["#58a6ff", "#56d364", "#ffa657", "#d2a8ff", "#f0564f", "#79c0ff"];
 
+/** Русская плюрализация: plural(3, "токен", "токена", "токенов") → «токена». */
+const plural = (n: number, one: string, few: string, many: string) => {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+};
+
 const STEPS: StoryStep[] = [
   {
     emoji: "✂️",
@@ -146,7 +155,7 @@ export default function Tokenization() {
   }, [st, demoStates.length]);
 
   const tokens = useMemo(() => encodeText(text, merges), [text, merges]);
-  const letters = text.replace(/\s/g, "").length;
+  const letters = (text.match(/[а-яёa-z]/gi) ?? []).length;
 
   /* статистика по словам ввода — для заданий */
   const wordStats = useMemo(() => {
@@ -222,7 +231,7 @@ export default function Tokenization() {
               ))}
               <span className="ml-2 text-[13px] text-muted">
                 {curState.syms.length}{" "}
-                {curState.syms.length === 1 ? "токен" : "токенов"}
+                {plural(curState.syms.length, "токен", "токена", "токенов")}
               </span>
             </div>
             <div className="mt-2 min-h-[20px] text-[13px] text-muted">
@@ -265,7 +274,11 @@ export default function Tokenization() {
                           }
                         : { borderColor: "#8a3633", color: "#ffb3ae" }
                     }
-                    title={t.known ? undefined : "символ не из словаря (не кириллица)"}
+                    title={
+                      t.known
+                        ? undefined
+                        : "символ вне словаря: пунктуация, цифра или другой алфавит"
+                    }
                   >
                     {t.text}
                   </motion.span>

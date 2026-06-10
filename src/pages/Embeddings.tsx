@@ -44,7 +44,9 @@ const STEPS: StoryStep[] = [
         <span style={{ color: THEME_COLORS["животные"] }}>животные</span>,{" "}
         <span style={{ color: THEME_COLORS["нейросети"] }}>нейросети</span>.
         Алгоритму никто не говорил, что «снег» и «зимой» — родня. Он увидел
-        это в текстах. У GPT так же — только текстов в миллиард раз больше.
+        это в текстах. Серые точки — слова без своей темы: служебные («и»,
+        «на») и «общие», кочующие между темами. У GPT так же — только текстов
+        в миллиард раз больше.
       </>
     ),
   },
@@ -201,7 +203,17 @@ export default function Embeddings() {
                   <g
                     key={p.word}
                     onClick={() => pick(p.word, p.theme)}
-                    style={{ cursor: "pointer" }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        pick(p.word, p.theme);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`слово «${p.word}» — показать соседей`}
+                    aria-pressed={isSel}
+                    style={{ cursor: "pointer", outline: "none" }}
                     opacity={dim ? 0.3 : 1}
                   >
                     <circle
