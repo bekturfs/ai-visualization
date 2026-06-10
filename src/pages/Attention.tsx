@@ -176,9 +176,13 @@ export default function Attention() {
     return EMB.nearestToVec(mix, 3, [words[sel]]);
   }, [words, rowW, sel]);
 
-  /* шаги истории */
+  /* шаги истории; words.length в зависимостях — смена предложения
+     перезапускает авто-цикл с корректной длиной */
   useEffect(() => {
-    if (cycleTimer.current) clearInterval(cycleTimer.current);
+    if (cycleTimer.current !== null) {
+      clearInterval(cycleTimer.current);
+      cycleTimer.current = null;
+    }
     if (st === 1) {
       let i = 0;
       cycleTimer.current = window.setInterval(() => {
@@ -186,7 +190,10 @@ export default function Attention() {
         setSelected(i);
       }, 950);
       return () => {
-        if (cycleTimer.current) clearInterval(cycleTimer.current);
+        if (cycleTimer.current !== null) {
+          clearInterval(cycleTimer.current);
+          cycleTimer.current = null;
+        }
       };
     }
     if (st === 2) setSelected(2 % words.length);
@@ -196,7 +203,7 @@ export default function Attention() {
     }
     if (st === 7) setCausal(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [st]);
+  }, [st, words.length]);
 
   const pick = (i: number) => {
     setSelected(i);
