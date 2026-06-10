@@ -74,8 +74,10 @@ svg text {
   user-select: none;
 }
 
-/* видимый фокус для интерактивных узлов внутри SVG (клавиатурная навигация) */
+/* видимый фокус для интерактивных узлов внутри SVG (клавиатурная навигация):
+   белый пунктир контрастен на заливке любого цвета и отличим от выделения */
 svg g[role="button"]:focus-visible circle {
-  stroke: var(--color-amber);
-  stroke-width: 3;
+  stroke: var(--color-ink);
+  stroke-width: 2.5;
+  stroke-dasharray: 3 2;
 }

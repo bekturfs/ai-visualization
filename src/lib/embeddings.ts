@@ -98,11 +98,11 @@ function build() {
     return { v, lambda };
   };
   const e1 = powerIter(M);
+  // дефляция: убираем первое направление и ищем второе
   const D = M.map((row, i) =>
     row.map((x, j) => x - e1.lambda * e1.v[i] * e1.v[j]),
-  ) as unknown as Float64Array[];
-  const D2 = D.map((r) => Float64Array.from(r));
-  const e2 = powerIter(D2);
+  );
+  const e2 = powerIter(D);
 
   const xs = vocab.map((_, i) =>
     M[i].reduce((s, x, j) => s + x * e1.v[j], 0),
