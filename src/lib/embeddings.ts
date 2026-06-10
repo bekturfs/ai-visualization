@@ -149,7 +149,36 @@ function build() {
       .sort((a, b) => b.sim - a.sim)
       .slice(0, k);
 
-  return { points, vocab, cosine, neighbors };
+  /** PPMI-вектор слова (копия — внутреннюю матрицу мутировать нельзя). */
+  const vector = (w: string): Float64Array | undefined => {
+    const i = idx.get(w);
+    return i === undefined ? undefined : Float64Array.from(M[i]);
+  };
+
+  const cosVec = (a: Float64Array, b: Float64Array): number => {
+    if (a.length !== b.length) return 0;
+    let d = 0,
+      na = 0,
+      nb = 0;
+    for (let k = 0; k < V; k++) {
+      d += a[k] * b[k];
+      na += a[k] ** 2;
+      nb += b[k] ** 2;
+    }
+    return na && nb ? d / Math.sqrt(na * nb) : 0;
+  };
+
+  /** Ближайшие слова словаря к произвольному вектору (длины V). */
+  const nearestToVec = (vec: Float64Array, k = 3, exclude: string[] = []) =>
+    vec.length !== V
+      ? []
+      : vocab
+      .filter((w) => !exclude.includes(w))
+      .map((w) => ({ word: w, sim: cosVec(vec, M[idx.get(w)!]) }))
+      .sort((a, b) => b.sim - a.sim)
+      .slice(0, k);
+
+  return { points, vocab, cosine, neighbors, vector, nearestToVec };
 }
 
 export const EMB = build();
