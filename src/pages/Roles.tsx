@@ -494,6 +494,10 @@ export default function Roles() {
               />
             ))}
             <SliderRow label="b характер" labelWidth={96} value={b} onChange={setB} min={-3} max={3} signColor />
+            <div className="mt-2 text-[12px] leading-normal text-faint">
+              синий провод — факт голосует «за» зонт, красный — «против»
+              (отрицательная важность); толщина — сила влияния
+            </div>
             <div className="mt-3 flex items-center gap-2 text-[13.5px]">
               <span className="text-muted">что случилось на самом деле:</span>
               <button

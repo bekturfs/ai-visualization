@@ -529,8 +529,8 @@ export default function GradientDescent() {
             />
           </div>
           <div className="text-[12.5px] leading-normal text-muted">
-            η ≈ 0.1 — медленно · η ≈ 0.5 — хорошо · η ≈ 3 — осцилляции ·
-            η &gt; 3.3 — взрыв 💥 (для чаши)
+            η ≈ 0.1 — медленно · η ≈ 0.5 — хорошо · η ≈ 3 — скачет туда-сюда
+            (осцилляции) · η &gt; 3.3 — взрыв 💥 (для чаши)
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             <Btn onClick={() => { setRunning(false); step(); }} disabled={diverged}>

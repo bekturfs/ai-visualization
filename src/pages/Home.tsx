@@ -156,7 +156,8 @@ export default function Home() {
             className="mb-2 max-w-[760px] text-base text-muted"
           >
             Интерактивные визуализации, чтобы <b className="text-ink">увидеть</b>,
-            как работает ИИ — от одного нейрона до LLM. Каждая тема — это{" "}
+            как работает ИИ — от одного нейрона до больших языковых моделей
+            (LLM) вроде ChatGPT. Каждая тема — это{" "}
             <b className="text-ink">пошаговая история простым языком</b> с
             анимациями и 3D, а в конце — песочница, где всё можно покрутить
             руками. Все вычисления на страницах честные — никаких заранее
@@ -237,6 +238,18 @@ export default function Home() {
           </span>
         </Link>
       </motion.div>
+
+      <motion.p
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.25 }}
+        className="mt-5 rounded-xl border border-edge bg-panel2/60 px-4 py-2.5 text-[13.5px] text-soft"
+      >
+        🧭 <b className="text-ink">Если ты тут впервые</b> — иди по порядку:{" "}
+        <span className="font-mono text-accent">00 → 🧩 → 01 → 02 → 03 → 04</span>.
+        Каждая страница опирается на предыдущие, а внизу каждой есть кнопка
+        «дальше →».
+      </motion.p>
 
       <h2 className="mb-3.5 mt-9 text-[13px] font-semibold uppercase tracking-[0.08em] text-muted">
         Блок 1 · Основы нейросетей (neural network fundamentals)
