@@ -154,6 +154,36 @@ function HeroNet() {
   );
 }
 
+/** Декоративный фон карточки игры: уходящая в звёзды дорога. */
+function NightRoadArt() {
+  const stars = Array.from({ length: 26 }, (_, i) => ({
+    x: 6 + ((i * 137) % 92),
+    y: 4 + ((i * 53) % 34),
+    r: 0.6 + ((i * 7) % 3) * 0.35,
+    o: 0.25 + ((i * 11) % 5) * 0.13,
+  }));
+  return (
+    <svg
+      viewBox="0 0 100 60"
+      preserveAspectRatio="none"
+      className="pointer-events-none absolute inset-0 h-full w-full opacity-70"
+      aria-hidden
+    >
+      {stars.map((s, i) => (
+        <circle key={i} cx={s.x} cy={s.y} r={s.r} fill="#eaf4ff" opacity={s.o} />
+      ))}
+      {/* полотно, сходящееся к точке схода */}
+      <path d="M -10 60 L 46 26 L 54 26 L 110 60 Z" fill="#0d2247" opacity="0.75" />
+      <path d="M 46 26 L 54 26 L 110 60 L 96 60 Z" fill="#123061" opacity="0.35" />
+      {/* осевая и неоновые следы фар */}
+      <path d="M 49.4 27 L 50.6 27 L 60 60 L 44 60 Z" fill="#ffd15c" opacity="0.22" />
+      <path d="M 47 30 L 30 60" stroke="#5ecbff" strokeWidth="1.1" opacity="0.5" />
+      <path d="M 44 33 L 14 60" stroke="#2b8cff" strokeWidth="0.9" opacity="0.35" />
+      <path d="M 53 30 L 72 60" stroke="#ff2a1a" strokeWidth="0.9" opacity="0.35" />
+    </svg>
+  );
+}
+
 export default function Home() {
   return (
     <main className="mx-auto max-w-[1080px] px-6 pb-14 pt-10">
@@ -251,6 +281,37 @@ export default function Home() {
             </p>
           </div>
           <span className="ml-auto text-2xl text-faint transition-transform group-hover:translate-x-1 group-hover:text-accent max-md:hidden">
+            →
+          </span>
+        </Link>
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.22 }}
+        className="mt-4"
+      >
+        <Link
+          to="/ride"
+          className="group relative flex items-center gap-5 overflow-hidden rounded-2xl border border-[#2b8cff]/45 bg-gradient-to-br from-[#08142e] via-[#0a1a3a] to-[#050b1c] px-6 py-4 no-underline transition-all hover:-translate-y-0.5 hover:border-[#5ecbff]"
+        >
+          <NightRoadArt />
+          <span className="relative text-[26px]">🌌</span>
+          <div className="relative">
+            <div className="text-[16px] font-semibold text-ink">
+              Starry Ride — ночной заезд{" "}
+              <span className="text-[13px] font-normal text-[#7fb2e8]">
+                (игра, а не урок)
+              </span>
+            </div>
+            <p className="m-0 mt-0.5 max-w-[760px] text-[13.5px] leading-normal text-[#b9cee8]">
+              Горная дорога, неоновые следы встречных фар и звёздное небо,
+              которое меняется по дороге. Руль на стрелках, пробел — нитро.
+              Отдохни от нейросетей и просто доедь как можно дальше.
+            </p>
+          </div>
+          <span className="relative ml-auto text-2xl text-[#3d6ea8] transition-transform group-hover:translate-x-1 group-hover:text-[#5ecbff] max-md:hidden">
             →
           </span>
         </Link>

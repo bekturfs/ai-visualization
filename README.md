@@ -8,6 +8,18 @@ Reading about AI is one thing; **seeing** it is another. The goal of this projec
 
 Every topic is built as a **step-by-step story in plain language** (with real-life analogies, animations and 3D where it helps), followed by a free-play sandbox with hands-on challenges. All numbers on screen are computed live — nothing is pre-recorded.
 
+## Starry Ride — the game
+
+Not a lesson: an actual arcade game at [`/#/ride`](src/pages/Ride.tsx). A first-person
+night drive down a mountain road — neon light trails from oncoming traffic, a red-glowing
+instrument cluster, and a starry sky that morphs between chapters (meteor shower, nebula,
+star-trail vortex) as the distance climbs. Overtake, chain near-misses for combo, burn
+nitro, don't die. Everything is procedural: the road, the traffic, the scenery, the sky
+textures and every sound — no assets, no network, no new dependencies.
+
+Design spec and module map: [`docs/GAME.md`](docs/GAME.md). Build status and the resume
+point for a fresh session: [`PROGRESS.md`](PROGRESS.md).
+
 ## Roadmap
 
 ### 0. The Big Picture
@@ -64,6 +76,13 @@ npm run build    # production build (output in dist/)
 npm run preview  # serve the production build locally
 ```
 
+Visual checks (run against `npm run preview`):
+
+```bash
+node scripts/shoot.mjs       # screenshot sweep over the visualization pages
+node scripts/ride-shoot.mjs  # plays a run of the game, shoots frames, reports FPS and console errors
+```
+
 ## Deployment
 
 The site is fully static, so it deploys to GitHub Pages for free. A workflow
@@ -89,8 +108,11 @@ src/
     FlowDots.tsx        — animated signal particles for SVG edges
     ui.tsx              — shared cards, sliders, buttons, animated numbers
   lib/                  — formatting and math helpers
+  game/                 — Starry Ride: types/config/road/rng core, engine, worldGen,
+                          input, audio, scene/ (Three.js) and ui/ (SVG cabin, HUD, screens)
 scripts/
   shoot.mjs             — Playwright screenshot sweep used for visual checks
+  ride-shoot.mjs        — Playwright run-through of the game
 ```
 
 Each page follows the same pattern: a guided story (steps highlight parts of the scene and trigger animations) → a sandbox with live computation → hands-on challenges that check themselves.
