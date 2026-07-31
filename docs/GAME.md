@@ -134,7 +134,8 @@ src/game/
   audio.ts      — процедурный звук, драйнит очередь событий
   scene/        — Sky, Road, Terrain, Traffic, Pickups, Effects (bloom), Rig (камера)
   ui/           — Dashboard (SVG-кабина), Hud, Screens (меню/пауза/конец)
-src/pages/Ride.tsx — сборка: Canvas + цикл + оверлеи
+src/Ride.tsx     — сборка: Canvas + цикл + оверлеи
+src/main.tsx     — точка входа, роутера нет
 ```
 
 Правило, которое держит модули независимыми: **всё импортирует только из

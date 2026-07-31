@@ -1,122 +1,78 @@
-# ai-visualization
+# Starry Ride
 
-Interactive visualizations for understanding how AI works — from neural network basics to LLM internals and deep research agents.
+Аркадный ночной заезд в браузере. Вид с места водителя: горная дорога, неоновые
+следы встречных фар, красная подсветка приборки — и звёздное небо, которое
+меняется по мере того, как ты едешь: метеорный дождь, огромная туманность,
+воронка звёздных треков.
 
-## Why
+Референс — рил «Starry Ride» (@hellopersonality). Он оказался ИИ-генерацией,
+и небо у него перестраивается каждые пару секунд. Это не стали чинить, а
+превратили в механику: у неба есть **главы**, и они сменяются по дистанции.
 
-Reading about AI is one thing; **seeing** it is another. The goal of this project is to learn everything related to AI by building visualizations of the core concepts — each one small, interactive, and focused on a single idea.
+**Играть:** стрелки или `A`/`D` — руль, `Space` — нитро, `Esc` — пауза,
+`M` — звук. На телефоне — драг по экрану и кнопки.
 
-Every topic is built as a **step-by-step story in plain language** (with real-life analogies, animations and 3D where it helps), followed by a free-play sandbox with hands-on challenges. All numbers on screen are computed live — nothing is pre-recorded.
+## Что здесь необычного
 
-## Starry Ride — the game
+- **Ни одного ассета.** Ни картинок, ни звуков, ни моделей, ни шрифтов. Дорога,
+  горы, деревья, огни городка, текстуры звёзд и туманности рисуются в canvas при
+  старте; весь звук — синтез в WebAudio (двигатель с коробкой на шесть передач,
+  ветер, свист от разъезда, synthwave-пад). Сборка — это HTML, JS и CSS, и всё.
+- **Мир бесконечный и детерминированный.** Дорога — сумма синусов от дистанции,
+  декорации — чистая функция от хеша индекса ячейки. Ничего не хранится, любой
+  модуль в любой кадр может спросить, что находится на 12-м километре.
+- **Камера стоит в нуле, мир едет мимо.** Абсолютная дистанция не попадает в
+  координаты вершин, поэтому на сотом километре картинка такая же чистая, как на
+  первом.
+- **React не участвует в кадре.** Всё состояние — один мутируемый объект в ref;
+  HUD обновляется 12 раз в секунду, стрелки приборов и полоса нитро — напрямую
+  через refs в rAF.
 
-Not a lesson: an actual arcade game at [`/#/ride`](src/pages/Ride.tsx). A first-person
-night drive down a mountain road — neon light trails from oncoming traffic, a red-glowing
-instrument cluster, and a starry sky that morphs between chapters (meteor shower, nebula,
-star-trail vortex) as the distance climbs. Overtake, chain near-misses for combo, burn
-nitro, don't die. Everything is procedural: the road, the traffic, the scenery, the sky
-textures and every sound — no assets, no network, no new dependencies.
-
-Design spec and module map: [`docs/GAME.md`](docs/GAME.md). Build status and the resume
-point for a fresh session: [`PROGRESS.md`](PROGRESS.md).
-
-## Roadmap
-
-### 0. The Big Picture
-- [x] [How AI writes an answer](src/pages/BigPicture.tsx) — the whole pipeline on one screen: text → tokens → numbers → network → probabilities → next word. Powered by a real tiny n-gram model trained in the browser on a built-in corpus, with honest probabilities, temperature lottery and several starter phrases. Built for non-programmers.
-- [x] [What each part does](src/pages/Roles.tsx) — a plain-language cheat sheet: the role of every building block (input, weight, bias, activation, layer, loss, gradient, learning rate, backprop, training loop) explained through one everyday example — "should I take an umbrella?" — with a live neuron whose numbers feed every card.
-
-### 1. Neural Network Fundamentals
-- [x] [Neuron & activation functions](src/pages/Neuron.tsx) — what a single neuron computes: guided story, live signals flowing along the wires, honest formulas, challenges
-- [x] [Forward pass](src/pages/ForwardPass.tsx) — animated wave of computation rolling through a 2–3–2 network; click any neuron to see its personal formula
-- [x] [Gradient descent](src/pages/GradientDescent.tsx) — a real **3D loss landscape** (Three.js): orbit the valley, drop the ball anywhere, play with the learning rate, watch divergence and local minima traps
-- [x] [Backpropagation](src/pages/Backprop.tsx) — micrograd-style computational graph with an animated "blame flow" running backwards, training steps and a live loss curve
-
-### 2. How LLMs Work
-- [x] [Tokenization](src/pages/Tokenization.tsx) — a real BPE tokenizer trained in the browser on the built-in corpus: watch a word merge from letters, inspect the learned merge table, tokenize any text and see the token-vs-letters savings
-- [x] [Embeddings](src/pages/Embeddings.tsx) — an honest semantic map: co-occurrence + PPMI vectors computed live from the corpus, projected to 2D; click words to see nearest neighbors, compare any pair by cosine similarity
-- [ ] Attention mechanism — what "tokens looking at each other" means
-- [ ] Transformer architecture — the full picture, layer by layer
-- [ ] Next-token prediction — probability distribution over the vocabulary
-- [ ] Sampling — temperature, top-p, top-k and how they change output
-- [ ] Context window & KV cache — why context is limited and what makes inference fast
-
-### 3. Training LLMs
-- [ ] Pretraining — learning from raw text at scale
-- [ ] Fine-tuning — adapting a base model to follow instructions
-- [ ] RLHF — how human feedback shapes model behavior
-
-### 4. Deep Search & Agents
-- [ ] RAG (Retrieval-Augmented Generation) — chunking, vector search, augmented prompts
-- [ ] Deep research pipeline — query decomposition → parallel search → source verification → synthesis
-- [ ] Tool use — how an LLM calls external tools and reads results
-- [ ] Agent loop — plan, act, observe, repeat
-- [ ] Multi-agent systems — orchestrating several agents on one task
-
-### 5. Beyond Text
-- [ ] Diffusion models — how images emerge from noise
-- [ ] Multimodality — how models combine text, images, and audio
-
-## Tech Stack
-
-- **React 19 + TypeScript + Vite** — app shell and interactivity
-- **Three.js / react-three-fiber + drei** — 3D scenes (loss landscape)
-- **Motion (framer-motion)** — UI and SVG animations
-- **Tailwind CSS 4** — styling
-- Custom rAF-driven SVG particles for signal/gradient flows
-
-The UI is in Russian with key terms duplicated in English, since the visualizations are designed as companions to English-language videos (3Blue1Brown's neural networks series and Andrej Karpathy's "Neural Networks: Zero to Hero").
-
-## Getting Started
+## Запуск
 
 ```bash
 npm install
-npm run dev      # dev server
-npm run build    # production build (output in dist/)
-npm run preview  # serve the production build locally
+npm run dev      # дев-сервер
+npm run build    # прод-сборка в dist/
+npm run preview  # посмотреть прод-сборку локально
+npm run shots    # прогон в настоящем браузере: кадры, FPS, ошибки консоли
 ```
 
-Visual checks (run against `npm run preview`):
-
-```bash
-node scripts/shoot.mjs       # screenshot sweep over the visualization pages
-node scripts/ride-shoot.mjs  # plays a run of the game, shoots frames, reports FPS and console errors
-```
-
-## Deployment
-
-The site is fully static, so it deploys to GitHub Pages for free. A workflow
-(`.github/workflows/deploy.yml`) builds and publishes it on every push to
-`master`. One-time setup: repository **Settings → Pages → Source: GitHub
-Actions**. The site then lives at `https://<user>.github.io/ai-visualization/`.
-
-Hash-based routing and `base: "./"` mean the build also works on any other
-static host (Netlify, Vercel, Cloudflare Pages): build command `npm run build`,
-output directory `dist`.
-
-## Project Structure
+## Структура
 
 ```
 src/
-  pages/                — one page per visualization + home
-    Neuron.tsx          — neuron & activation functions
-    ForwardPass.tsx     — forward pass through a 2–3–2 network
-    GradientDescent.tsx — 3D gradient descent on a loss landscape
-    Backprop.tsx        — backpropagation on a computational graph
-  components/
-    StoryMode.tsx       — the step-by-step guided story engine
-    FlowDots.tsx        — animated signal particles for SVG edges
-    ui.tsx              — shared cards, sliders, buttons, animated numbers
-  lib/                  — formatting and math helpers
-  game/                 — Starry Ride: types/config/road/rng core, engine, worldGen,
-                          input, audio, scene/ (Three.js) and ui/ (SVG cabin, HUD, screens)
+  Ride.tsx          — сборка: Canvas, цикл кадра, оверлеи
+  game/
+    types.ts        — Game и всё остальное, что знают друг о друге модули
+    config.ts       — каждое настраиваемое число и палитра
+    road.ts         — форма дороги и проекция мира в сцену
+    rng.ts, num.ts  — детерминированная случайность и мелкая математика
+    engine.ts       — физика, столкновения, очки, главы неба
+    worldGen.ts     — трафик, бонусы, декорации
+    input.ts        — клавиатура и тач
+    audio.ts        — процедурный звук
+    scene/          — Sky, Road, Terrain, Lights, Traffic, Pickups, Effects, Rig
+    ui/             — Dashboard (SVG-кабина), Hud, Screens
 scripts/
-  shoot.mjs             — Playwright screenshot sweep used for visual checks
-  ride-shoot.mjs        — Playwright run-through of the game
+  ride-shoot.mjs    — Playwright: заезд, кадры, FPS, ошибки
+docs/GAME.md        — дизайн-документ
+PROGRESS.md         — статус работ и точка возобновления
 ```
 
-Each page follows the same pattern: a guided story (steps highlight parts of the scene and trigger animations) → a sandbox with live computation → hands-on challenges that check themselves.
+Модули не импортируют друг друга — только `types` / `config` / `road` / `rng` /
+`num`. Всё остальное сходится в `Ride.tsx`.
 
-## License
+## Деплой
 
-Not yet specified.
+Статика, поэтому GitHub Pages: воркфлоу `.github/workflows/deploy.yml` собирает и
+публикует на каждый пуш в `master`. Разово: **Settings → Pages → Source: GitHub
+Actions**. `base: "./"` — сборка работает из любого подкаталога, так что Netlify,
+Vercel и Cloudflare Pages тоже подойдут (команда `npm run build`, каталог `dist`).
+
+## История
+
+До этого в репозитории жил набор интерактивных визуализаций про нейросети и LLM
+(нейрон, forward pass, градиентный спуск, backprop, BPE-токенизация,
+эмбеддинги). Они никуда не делись — лежат в истории git, ветка `master` до
+коммита `69eee4b`.

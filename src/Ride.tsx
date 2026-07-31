@@ -7,11 +7,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { Canvas, useFrame } from "@react-three/fiber";
 
-import { CAM, COLORS, QUALITY, STORE } from "../game/config";
-import type { Game, HudSnapshot, Quality } from "../game/types";
+import { CAM, COLORS, QUALITY, STORE } from "./game/config";
+import type { Game, HudSnapshot, Quality } from "./game/types";
 import {
   commitBest,
   createGame,
@@ -20,23 +19,23 @@ import {
   startRun,
   step,
   togglePause,
-} from "../game/engine";
-import { ensureWorld, forEachLamp, forEachTownLight, forEachTree, resetWorld, ridgeHeight } from "../game/worldGen";
-import { bindInput, bindTouchSurface, setTouchButton, setTouchSteer } from "../game/input";
-import { createAudio, type RideAudio } from "../game/audio";
+} from "./game/engine";
+import { ensureWorld, forEachLamp, forEachTownLight, forEachTree, resetWorld, ridgeHeight } from "./game/worldGen";
+import { bindInput, bindTouchSurface, setTouchButton, setTouchSteer } from "./game/input";
+import { createAudio, type RideAudio } from "./game/audio";
 
-import { Sky } from "../game/scene/Sky";
-import { Road } from "../game/scene/Road";
-import { Terrain } from "../game/scene/Terrain";
-import { Lights } from "../game/scene/Lights";
-import { Traffic } from "../game/scene/Traffic";
-import { Pickups } from "../game/scene/Pickups";
-import { Effects } from "../game/scene/Effects";
-import { Rig } from "../game/scene/Rig";
+import { Sky } from "./game/scene/Sky";
+import { Road } from "./game/scene/Road";
+import { Terrain } from "./game/scene/Terrain";
+import { Lights } from "./game/scene/Lights";
+import { Traffic } from "./game/scene/Traffic";
+import { Pickups } from "./game/scene/Pickups";
+import { Effects } from "./game/scene/Effects";
+import { Rig } from "./game/scene/Rig";
 
-import { Dashboard } from "../game/ui/Dashboard";
-import { Hud } from "../game/ui/Hud";
-import { Screens } from "../game/ui/Screens";
+import { Dashboard } from "./game/ui/Dashboard";
+import { Hud } from "./game/ui/Hud";
+import { Screens } from "./game/ui/Screens";
 
 /* ---------- сохранённые настройки ---------- */
 
@@ -239,8 +238,6 @@ export default function Ride() {
     [g],
   );
 
-  const playing = snap.phase === "playing" || snap.phase === "crashed";
-
   return (
     <div
       ref={wrapRef}
@@ -279,16 +276,6 @@ export default function Ride() {
         onHelp={() => setShowHelp(true)}
         onExitHelp={() => setShowHelp(false)}
       />
-
-      {/* выход обратно на сайт — прячется во время заезда, чтобы не мешать */}
-      <Link
-        to="/"
-        className={`absolute left-3 top-3 z-30 rounded-lg border border-white/15 bg-black/45 px-3 py-1.5 text-[13px] text-white/70 no-underline backdrop-blur-sm transition-opacity hover:text-white ${
-          playing ? "opacity-0 hover:opacity-100 focus:opacity-100" : "opacity-100"
-        }`}
-      >
-        ← к визуализациям
-      </Link>
     </div>
   );
 }
