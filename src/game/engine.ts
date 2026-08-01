@@ -175,6 +175,8 @@ export function createGame(opts?: {
     pickups,
     events: [],
 
+    acc: 0,
+
     seed,
     quality: opts?.quality ?? 1,
     reducedMotion: opts?.reducedMotion ?? false,
@@ -245,6 +247,7 @@ export function startRun(g: Game): void {
   g.pickupCursor = PICKUPS.gap[0];
   g.nextId = 1;
 
+  g.acc = 0;
   g.events.length = 0;
   scrapeGate.set(g, 0);
   push(g, "start");
@@ -258,11 +261,50 @@ export function togglePause(g: Game): void {
 
 /* ---------- шаг симуляции ---------- */
 
+/** Шаг симуляции, одинаковый на любом мониторе. */
+const FIXED_DT = 1 / 120;
+/** Больше шести подшагов за кадр не считаем: MAX_DT их столько и покрывает. */
+const MAX_SUBSTEPS = 6;
+
 /**
- * Один кадр симуляции. Порядок разделов важен: скорость считается до продвижения
- * по дороге, мир заселяется до движения трафика, трафик двигается до столкновений.
+ * Кадр снаружи. Внутри симуляция всегда идёт шагами по `FIXED_DT`, а остаток
+ * копится до следующего раза.
+ *
+ * Так сделано не из любви к порядку. Скорость интегрируется явным Эйлером, и в
+ * ней есть квадратичное сопротивление — при разной длине шага получается разный
+ * результат. Замер `npm run soak` на пятиминутном заезде: 30 Гц давали 16784 м,
+ * 240 Гц — 16440 м, расхождение 2 %. То есть на мониторе 30 Гц игрок проезжал
+ * дальше и набирал больше очков за то же время. С фиксированным шагом обе
+ * частоты считают ровно одно и то же.
  */
 export function step(g: Game, dt: number): void {
+  if (!(dt > 0)) return;
+  if (g.phase !== "playing" && g.phase !== "crashed") {
+    // На паузе и в меню долг не копим, иначе после снятия паузы симуляция
+    // рванёт навёрстывать простой.
+    g.acc = 0;
+    return;
+  }
+  if (dt > MAX_DT) dt = MAX_DT;
+  g.acc += dt;
+  let n = 0;
+  while (g.acc >= FIXED_DT && n < MAX_SUBSTEPS) {
+    stepFixed(g, FIXED_DT);
+    g.acc -= FIXED_DT;
+    n++;
+    if (g.phase !== "playing" && g.phase !== "crashed") {
+      g.acc = 0;
+      return;
+    }
+  }
+  if (n >= MAX_SUBSTEPS) g.acc = 0;
+}
+
+/**
+ * Один шаг симуляции. Порядок разделов важен: скорость считается до продвижения
+ * по дороге, мир заселяется до движения трафика, трафик двигается до столкновений.
+ */
+function stepFixed(g: Game, dt: number): void {
   /* 1. Защита от прыжка времени и фазовый фильтр. */
   if (!(dt > 0)) return;
   if (dt > MAX_DT) dt = MAX_DT;

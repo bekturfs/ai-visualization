@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "shots": "node scripts/ride-shoot.mjs",
-    "single": "node scripts/bundle-single.mjs"
+    "single": "node scripts/bundle-single.mjs",
+    "soak": "node scripts/engine-soak.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.0.0",

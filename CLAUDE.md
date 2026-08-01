@@ -22,7 +22,15 @@ npm run dev                     # vite dev server, :5173
 npm run build                   # tsc -b && vite build — must pass clean before any commit
 npm run preview                 # serve dist/ on :4173
 npm run shots                   # scripts/ride-shoot.mjs — needs preview running
+npm run soak                    # headless simulation, no browser, ~10 s
+npm run single                  # dist/starry-ride.html — the whole game in one file
 ```
+
+`npm run soak` is the cheap check and the one to run first. It esbuild-bundles
+`engine.ts` + `worldGen.ts` (neither imports React or three, by design) and drives
+them in node: sky chapters advancing over 65 km, an hour of driving with no NaN and
+no pool overflow, run determinism, exact frame-rate independence with input frozen,
+and the difficulty ramp. It catches the class of bug a screenshot never will.
 
 Chromium is preinstalled at `/opt/pw-browsers/`; never run `playwright install`.
 `scripts/ride-shoot.mjs` reads `CHROME_PATH`, `BASE_URL`, `OUT_DIR`, `QUICK=1`. It

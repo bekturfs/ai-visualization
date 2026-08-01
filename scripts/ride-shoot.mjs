@@ -194,11 +194,18 @@ for (let a = 0; a < 40; a++) {
     if (g.phase !== "playing") return;
     g.x = -1.85;
     g.vx = 0;
-    const car = g.cars.find((c) => c.active && c.oncoming) ?? g.cars.find((c) => c.active);
-    if (car) {
-      car.lane = -1.85;
-      car.s = g.s + 6;
-      car.scored = false;
+    // Сразу внутрь габарита, а не «на шесть метров вперёд»: при трёх кадрах в
+    // секунду за одну итерацию проходит один шаг симуляции, и машина, которую
+    // каждый раз возвращают на шесть метров, не доезжает никогда. Полудлина
+    // игрока 2.3 м плюс полудлина седана 2.35 м — на двух метрах пересечение
+    // гарантировано.
+    if (g.invuln <= 0) {
+      const car = g.cars.find((c) => c.active && c.oncoming) ?? g.cars.find((c) => c.active);
+      if (car) {
+        car.lane = -1.85;
+        car.s = g.s + 2;
+        car.scored = false;
+      }
     }
   });
   await page.waitForTimeout(350);
