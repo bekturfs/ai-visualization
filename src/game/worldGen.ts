@@ -407,7 +407,7 @@ function despawn(g: Game): void {
     const p = ps[i];
     if (!p.active) continue;
     // Собранный бонус уже за камерой — слот можно вернуть сразу.
-    if (p.s < back || (p.taken && p.s < g.s - 6)) p.active = false;
+    if (p.s < back || (p.taken && p.s < g.s - PICKUPS.keepBehind)) p.active = false;
   }
 }
 

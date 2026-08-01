@@ -1,28 +1,41 @@
 /**
  * Рельеф вокруг дороги: силуэты хребтов, тёмная насыпь обочин и хвойный лес.
  *
+ * Правило кадра из референса: ЦЕННОСТЬ ЕСТЬ ТОЛЬКО У ДОРОГИ, ОГНЕЙ И НЕБА.
+ * Всё, что растёт и лежит по сторонам, — почти чёрное. Лес читается силуэтом с
+ * холодной кромкой там, где его достают фары и небо; насыпь уходит в ноль;
+ * хребет темнее неба и светлеет только от воздушной перспективы.
+ *
  * Три слоя, все — от дистанции камеры, без единой аллокации в кадре:
  *
  *   1. ХРЕБТЫ. Две длинные ленты-силуэта (слева и справа) на удалении
  *      `RIDGE_LANE` метров. Каждая — полоса из трёх рядов: подножие, которое
  *      растворяется в ночи, плотная тёмная масса и гребень на высоте
- *      `ridge(s, side)`. Сверху по гребню идёт вторая, тонкая аддитивная лента
- *      `COLORS.mountainRim` — та самая холодная кромка из f_003 и f_007.
- *      Позиции переписываются каждый кадр, но дистанции вершин привязаны к
- *      сетке `RIDGE_STEP`: пока камера идёт внутри клетки, `ridge()` считается
- *      в тех же точках, и гребень не «кипит» на ходу.
+ *      `ridge(s, side)`. Поверх гребня идёт вторая, тонкая аддитивная лента
+ *      `COLORS.mountainRim` — холодная кромка из f_003 и f_007. Кромка лежит
+ *      НА склоне (вниз от гребня), а не над ним, и включается только там, где
+ *      под ней читается масса горы: иначе она отрывается и висит в небе
+ *      отдельной синей загогулиной.
  *
  *   2. НАСЫПЬ. Тёмный склон от кромки обочины (дорога заканчивается на
  *      `railX + 0.7`) и до 260 м в стороны. Без него под деревьями и у нижних
  *      углов кадра просвечивал бы купол неба. Заодно склон даёт лесу, на чём
  *      стоять: основание дерева садится на тот же профиль `slopeY`.
  *
- *   3. ЛЕС. Один InstancedMesh низкополигонального хвойника (ствол + три
- *      юбки одной геометрией, чтобы не платить вторым вызовом отрисовки).
- *      Пул рассчитан на самый жирный пресет, в кадре занимается столько слотов,
- *      сколько разрешает `QUALITY[g.quality].trees`; лишние схлопываются в ноль.
- *      Цвет слота — от `COLORS.foliage` к `COLORS.foliageLit` по близости к
- *      дороге, считается один раз на назначение слота, а не каждый кадр.
+ *   3. ЛЕС. Один InstancedMesh низкополигонального хвойника. Пул рассчитан на
+ *      самый жирный пресет, в кадре занимается столько слотов, сколько
+ *      разрешает `QUALITY[g.quality].trees`. Освещение запечено в цвет вершин:
+ *      почти чёрное тело `COLORS.foliage` плюс узкий блик `COLORS.foliageLit`
+ *      на грани, повёрнутой к дороге. Цвет инстанса — только затемнение, он
+ *      никогда не выводит дерево ярче `foliage`.
+ *
+ * ЛЕНТЫ ЖЁСТКИЕ. Внутри клетки s-сетки полоса не меняет формы: и `localX`, и
+ * `localY`, и `localZ` отличаются от «сеточных» координат ровно на общий сдвиг
+ * (`roadX(base) − roadX(camS) − camX`, `roadY(base) − roadY(camS)`,
+ * `camS − base`). Поэтому вершины пересчитываются только на переходе через
+ * клетку, а в кадре двигается `mesh.position`. Всё, что зависит от дистанции
+ * (альфа, дымка, толщина кромки, свет фар), меняется на масштабе сотен метров,
+ * и ступенька в 24–32 м в этом не видна.
  *
  * Туман сцены ставит Rig. Насыпь и деревья честно им гасятся (`fog: true`) и
  * потому не заканчиваются резкой линией. Хребты стоят в 1–2 км, то есть далеко
@@ -36,7 +49,7 @@ import * as THREE from "three";
 
 import type { Game, Tree } from "../types";
 import { COLORS, FOG, QUALITY } from "../config";
-import { localX, localY, localZ } from "../road";
+import { localX, localY, localZ, roadX, roadY } from "../road";
 import { clamp, lerp, smoothstep } from "../num";
 import { noise1 } from "../rng";
 
@@ -44,19 +57,16 @@ import { noise1 } from "../rng";
 
 const TAU = Math.PI * 2;
 
-/** Куда уезжает незанятый слот пула: нулевой масштаб в кадре камеры даёт w = 0
- *  и мусор в перспективном делении, поэтому слот ещё и проваливается вниз. */
-const HIDE_Y = -1e4;
-
 /* ---------- хребты ---------- */
 
-/** Боковое удаление гребня, м. Ближе — гора лезет в кадр стеной, дальше —
- *  теряется у точки схода. На 400 м силуэт входит в портретный кадр примерно
- *  с километра и красиво сходится к горизонту. */
-const RIDGE_LANE = 400;
+/** Боковое удаление гребня, м. Ближе — гора лезет в кадр стеной у самых краёв,
+ *  и её гребень уходит высоко в небо; дальше — силуэт ложится низкой полосой
+ *  над точкой схода, как в f_007. Заодно огни городка (до 420 м) оказываются
+ *  перед хребтом, а не за ним. */
+const RIDGE_LANE = 560;
 /** Насколько гребень гуляет вбок вдоль дороги, ±м: линии перестают быть
  *  параллельными коридору и читаются как отроги. */
-const RIDGE_WANDER = 90;
+const RIDGE_WANDER = 120;
 const RIDGE_NOISE = 1 / 780;
 
 /** Шаг сетки вершин, м. Вершины у `ridgeHeight` живут на масштабе ~145 м,
@@ -70,15 +80,36 @@ const RIDGE_FAR = 2200;
 const RIDGE_FADE = 1500;
 const RIDGE_COLS = Math.ceil((RIDGE_FAR + RIDGE_BACK) / RIDGE_STEP) + 1;
 
-/** Ряды тела: подножие (альфа 0), низ массы, гребень. */
-const RIDGE_BOT_Y = -190;
-const RIDGE_MID_Y = -30;
+/** Ряды тела: подножие (альфа 0), низ массы, гребень. Ниже −24 м массу всё
+ *  равно закрывает непрозрачная насыпь, поэтому подножие не тянем в бездну —
+ *  это чистый оверфилл на всю ширину кадра. */
+const RIDGE_BOT_Y = -110;
+const RIDGE_MID_Y = -24;
+
+/** Воздушная перспектива: дальний хребет светлеет и синеет, ближний остаётся
+ *  почти чёрным силуэтом. Подмес идёт во ВСЕ ряды сразу — гора должна быть
+ *  плоским силуэтом, а не подсвеченным по гребню валиком. */
+const RIDGE_HAZE_LO = 0.07;
+const RIDGE_HAZE_HI = 0.24;
+const RIDGE_HAZE_D0 = 700;
 
 /** Толщина кромки в метрах: доля дистанции, чтобы на экране она всегда была
  *  в пару пикселей, а не исчезала вдали и не превращалась в вал вблизи. */
-const RIM_K = 0.009;
-const RIM_MIN = 4;
-const RIM_MAX = 30;
+const RIM_K = 0.01;
+const RIM_MIN = 5;
+const RIM_MAX = 34;
+/** Полоса кромки: почти ничего вверх от гребня и длинный хвост вниз по склону.
+ *  Симметричная полоса читалась бы линией, висящей в небе, — ровно тот дефект,
+ *  который видно в верхних углах старого кадра. */
+const RIM_UP = 0.25;
+const RIM_DOWN = 2;
+/** Кромка появляется только там, где под ней есть читаемая масса горы. Ближе
+ *  `RIM_D0` лента идёт почти ребром к камере, уходит за край кадра, и линия
+ *  отрывается от силуэта. */
+const RIM_D0 = 520;
+const RIM_D1 = 900;
+const RIM_LO = 0.24;
+const RIM_HI = 0.45;
 
 /** Порядок отрисовки: после неба (у него −1000…−860), но до всего дорожного. */
 const ORDER_RIDGE = -820;
@@ -102,10 +133,22 @@ const APRON_SEAL1 = 1080;
  *  обочины (`ROAD.railX + 0.7` = 9.1 м), последняя уходит за огни городка. */
 const APRON_X: readonly number[] = [9, 20, 46, 110, 260];
 const APRON_ROWS = APRON_X.length;
-/** Яркость ряда: чем выше по склону, тем чернее. */
-const APRON_MUL: readonly number[] = [1.15, 0.95, 0.72, 0.5, 0.34];
+/** Яркость ряда: чем выше по склону, тем чернее. Все множители сильно меньше
+ *  единицы — обочина в референсе не «серо-синее поле», а темнота, на фоне
+ *  которой асфальт остаётся самым светлым на земле. */
+const APRON_MUL: readonly number[] = [1, 0.66, 0.38, 0.19, 0.09];
 /** Сколько света фар достаёт до ряда. */
-const APRON_NEAR: readonly number[] = [1, 0.62, 0.22, 0, 0];
+const APRON_NEAR: readonly number[] = [0.55, 0.22, 0.06, 0, 0];
+/** Подмес `COLORS.shoulder` в освещённый ряд. Меньше единицы: даже под фарами
+ *  обочина обязана остаться темнее асфальта. */
+const APRON_LIT_MUL = 0.75;
+/** Спад света фар, м. Длинный намеренно: короткий спад пришлось бы считать
+ *  каждый кадр, а так его хватает пересчитывать на переходе через клетку. */
+const APRON_LIT_D = 430;
+/** Затухание в чёрное по дистанции: дальний грунт гаснет раньше тумана. */
+const APRON_DARK_D0 = 40;
+const APRON_DARK_D1 = 700;
+const APRON_DARK_MIN = 0.05;
 /** Амплитуда рельефа дальних рядов, м. Ближние ряды ровные — на них стоит лес. */
 const APRON_BUMP: readonly number[] = [0, 0, 0, 5, 11];
 const APRON_NOISE = 1 / 180;
@@ -121,27 +164,49 @@ function slopeY(a: number): number {
 /** Пул на самый жирный пресет: качество можно менять на лету, а пул — нет. */
 const TREE_POOL = Math.max(QUALITY[0].trees, QUALITY[1].trees, QUALITY[2].trees);
 
-/** Дальность леса по пресетам, м. Дальше пул всё равно кончится, а обрыв
- *  прячется туманом и усадкой у самого края. */
-const TREE_RANGE: readonly number[] = [350, 620, 860];
+/** Дальность леса по пресетам, доля от `FOG.far`. Дальше туман съедает дерево
+ *  на две трети и больше — платить за него нечем. Плюс пул перестаёт кончаться
+ *  раньше дальней кромки, и усадка `grow` наконец работает как задумана. */
+const TREE_RANGE: readonly number[] = [0.34 * FOG.far, 0.6 * FOG.far, 0.77 * FOG.far];
 /** Предел бокового удаления: на экономном режиме дальний ряд не рисуем вовсе,
  *  зато ближняя стена доживает до нормальной дистанции. */
 const TREE_LANE_MAX: readonly number[] = [19, 40, 40];
 /** Насколько закапываем основание, м: профиль насыпи между колонками ленты
  *  интерполируется линейно и на полметра расходится с `slopeY`. */
 const TREE_SINK = -0.4;
+/** Ближний ряд генератора стоит в 9.9 м от осевой и семнадцатиметровой ёлкой
+ *  закрывает полкадра. Отодвигаем его от полотна и подрезаем по высоте, чтобы
+ *  крона обрамляла дорогу, а не заполняла небо. */
+const TREE_PUSH = 3.1;
+const TREE_PUSH_FAR = 21;
+const TREE_PUSH_NEAR = 9;
+const TREE_H_MAX = 13.5;
+/** Ближние деревья ниже дальних: дальний ряд строит силуэт стены. */
+const TREE_H_LO = 0.72;
+const TREE_H_D0 = 12;
+const TREE_H_D1 = 27;
 
-/** Ярусы кроны в долях высоты. */
+/** Ярусы кроны в долях высоты. Нижний садится прямо на землю: ствол ночью
+ *  всё равно чёрный, а это была треть треугольников дерева. */
 const TIERS: readonly { y0: number; y1: number; r: number }[] = [
-  { y0: 0.08, y1: 0.5, r: 0.26 },
-  { y0: 0.38, y1: 0.76, r: 0.195 },
-  { y0: 0.66, y1: 1, r: 0.125 },
+  { y0: 0, y1: 0.46, r: 0.23 },
+  { y0: 0.34, y1: 0.74, r: 0.17 },
+  { y0: 0.62, y1: 1, r: 0.11 },
 ];
 /** Рваный радиус по граням: силуэт перестаёт быть циркульным конусом. */
 const RAG: readonly number[] = [1, 0.88, 0.97, 0.84, 1, 0.91];
 const TREE_SEG = RAG.length;
-const TRUNK_H = 0.22;
-const TRUNK_R = 0.048;
+
+/** Тело кроны в долях `COLORS.foliage`: снизу почти чёрное, к макушке доходит
+ *  до самого цвета палитры (её достаёт небо). Ярче палитры — никогда. */
+const BODY_LO = 0.56;
+const BODY_HI = 0.4;
+/** Куда смотрит подсвеченная грань в локальных осях дерева; инстанс
+ *  доворачивает её в сторону дороги. */
+const LIT_DIR = 0;
+/** Ширина блика: чем больше степень, тем уже кромка. */
+const LIT_TIGHT = 5;
+const LIT_GAIN = 0.7;
 
 /* ---------- скретч кадра ---------- */
 
@@ -157,17 +222,15 @@ function hexInto(hex: string, mul: number, out: Float64Array, at: number) {
   out[at + 2] = _col.b * mul;
 }
 
-function hideSlot(m: THREE.Matrix4) {
-  m.makeScale(0, 0, 0);
-  m.setPosition(0, HIDE_Y, 0);
-}
-
 /* ---------- лента ---------- */
 
 /**
  * Полоса `cols × rows` вершин: колонки идут по дистанции, ряды — снизу вверх.
  * Цвет с альфой (itemSize 4): аддитивной кромке альфа задаёт яркость, телу
  * хребта — растворение подножия и дальнего края.
+ *
+ * Вершины лежат в системе координат клетки сетки (`base`), в кадр лента
+ * попадает сдвигом `mesh.position`.
  */
 interface Strip {
   pos: Float32Array;
@@ -211,8 +274,8 @@ function buildStrip(
   geom.setAttribute("position", posAttr);
   geom.setAttribute("color", colAttr);
   geom.setIndex(new THREE.BufferAttribute(index, 1));
-  // Сферу задаём руками: вершины переписываются каждый кадр, считать её заново
-  // нельзя, а отсечение по фрустуму лентам всё равно выключено.
+  // Сферу задаём руками: вершины переписываются на переходе через клетку,
+  // считать её заново нельзя, а отсечение по фрустуму лентам всё равно выключено.
   geom.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, -radius * 0.5), radius);
 
   const mesh = new THREE.Mesh(geom, mat);
@@ -221,47 +284,48 @@ function buildStrip(
   return { pos, col, posAttr, colAttr, geom, mesh };
 }
 
+function stripDirty(s: Strip) {
+  s.posAttr.needsUpdate = true;
+  s.colAttr.needsUpdate = true;
+}
+
 /* ---------- геометрия хвойника ---------- */
 
 /**
- * Ствол и три конические юбки одной геометрией высотой 1 и радиусом ~0.26.
- * Освещение запечено в цвет вершин: вертикальный градиент (низ темнее) плюс
- * разброс по граням, чтобы низкополигональный конус не читался плоским пятном.
- * Итоговый цвет — это произведение цвета вершины на цвет инстанса, поэтому
- * стволу достаётся не серый, а отношение `trunk / foliage`: у базового дерева
- * он выйдет ровно `COLORS.trunk`, у подсвеченного — его тёплым оттенком.
+ * Три конические юбки одной геометрией высотой 1 и радиусом ~0.23.
+ *
+ * Освещение запечено в цвет вершины и состоит из двух слагаемых:
+ *
+ *   тело  — `BODY_LO … BODY_LO + BODY_HI` от цвета инстанса: у земли остаётся
+ *           чуть больше половины, у макушки — почти всё. Даже «почти всё» —
+ *           это `COLORS.foliage`, то есть на экране near-black;
+ *   блик  — узкая кромка на грани, смотрящей в сторону `LIT_DIR`, заданная не
+ *           яркостью, а ОТНОШЕНИЕМ `foliageLit / foliage`. Цвет вершины
+ *           умножается на цвет инстанса (`foliage × k`), поэтому в кадре
+ *           кромка выходит ровно `COLORS.foliageLit × k` — палитра остаётся
+ *           единственным источником правды, никаких своих оттенков.
  */
-function buildConifer(tr: number, tg: number, tb: number): THREE.BufferGeometry {
+function buildConifer(lr: number, lg: number, lb: number): THREE.BufferGeometry {
   const pos: number[] = [];
   const col: number[] = [];
 
-  const shade = (y: number, a: number) =>
-    (0.52 + 0.62 * y) * (0.86 + 0.26 * (0.5 + 0.5 * Math.cos(a - 0.7)));
+  const body = (y: number, a: number) =>
+    (BODY_LO + BODY_HI * y) * (0.9 + 0.1 * Math.cos(a * 2 + 1.3));
 
-  const put = (x: number, y: number, z: number, b: number, trunk: boolean) => {
-    pos.push(x, y, z);
-    if (trunk) col.push(tr * b, tg * b, tb * b);
-    else col.push(b, b, b);
+  const rim = (y: number, a: number) => {
+    const c = Math.cos(a - LIT_DIR);
+    if (c <= 0) return 0;
+    return Math.pow(c, LIT_TIGHT) * (0.28 + 0.72 * y) * LIT_GAIN;
   };
 
-  // Ствол: четырёхгранная призма, видна только между нижней юбкой и землёй.
-  for (let j = 0; j < 4; j++) {
-    const a0 = (j / 4) * TAU + 0.4;
-    const a1 = ((j + 1) / 4) * TAU + 0.4;
-    const x0 = Math.cos(a0) * TRUNK_R;
-    const z0 = Math.sin(a0) * TRUNK_R;
-    const x1 = Math.cos(a1) * TRUNK_R;
-    const z1 = Math.sin(a1) * TRUNK_R;
-    const b = 0.5 + 0.25 * (0.5 + 0.5 * Math.cos(a0 - 0.7));
-    put(x1, 0, z1, b, true);
-    put(x0, 0, z0, b, true);
-    put(x0, TRUNK_H, z0, b, true);
-    put(x1, 0, z1, b, true);
-    put(x0, TRUNK_H, z0, b, true);
-    put(x1, TRUNK_H, z1, b, true);
-  }
+  const put = (x: number, y: number, z: number, a: number) => {
+    const b = body(y, a);
+    const r = rim(y, a);
+    pos.push(x, y, z);
+    col.push(b + r * lr, b + r * lg, b + r * lb);
+  };
 
-  // Юбки: боковая поверхность конуса, донышко не нужно — камера всегда выше
+  // Боковая поверхность конусов, донышко не нужно — камера всегда выше
   // основания дерева и внутрь конуса не заглядывает.
   for (let ti = 0; ti < TIERS.length; ti++) {
     const tier = TIERS[ti];
@@ -270,9 +334,9 @@ function buildConifer(tr: number, tg: number, tb: number): THREE.BufferGeometry 
       const a1 = ((j + 1) / TREE_SEG) * TAU;
       const r0 = tier.r * RAG[j];
       const r1 = tier.r * RAG[(j + 1) % TREE_SEG];
-      put(Math.cos(a1) * r1, tier.y0, Math.sin(a1) * r1, shade(tier.y0, a1), false);
-      put(Math.cos(a0) * r0, tier.y0, Math.sin(a0) * r0, shade(tier.y0, a0), false);
-      put(0, tier.y1, 0, shade(tier.y1, (a0 + a1) * 0.5) * 1.06, false);
+      put(Math.cos(a1) * r1, tier.y0, Math.sin(a1) * r1, a1);
+      put(Math.cos(a0) * r0, tier.y0, Math.sin(a0) * r0, a0);
+      put(0, tier.y1, 0, (a0 + a1) * 0.5);
     }
   }
 
@@ -296,20 +360,25 @@ interface World {
   trees: THREE.InstancedMesh;
   /** Какое дерево лежит в слоте: пока то же — цвет не пересчитываем. */
   keys: Float64Array;
+  /** Диапазон загрузки матриц. Один объект на всю жизнь: `addUpdateRange`
+   *  аллоцировал бы новый каждый кадр, а три чистит массив после загрузки. */
+  matRange: { start: number; count: number };
 
   /* палитра в линейном пространстве */
   foliage: Float64Array;
-  foliageLit: Float64Array;
   mountLo: Float64Array;
+  /** Дальний край воздушной перспективы и он же цвет кромки — `mountainRim`. */
   mountHi: Float64Array;
-  rimRGB: Float64Array;
   apronRGB: Float64Array;
   apronLit: Float64Array;
+
+  /* на какой клетке сетки собраны ленты (NaN — ещё ни разу) */
+  ridgeBase: number;
+  apronBase: number;
 
   /* контекст кадра для колбэка деревьев */
   cb: (t: Tree) => void;
   slot: number;
-  used: number;
   limit: number;
   range: number;
   laneMax: number;
@@ -331,7 +400,6 @@ function buildWorld(): World {
   const foliageLit = new Float64Array(3);
   const mountLo = new Float64Array(3);
   const mountHi = new Float64Array(3);
-  const rimRGB = new Float64Array(3);
   const apronRGB = new Float64Array(APRON_ROWS * 3);
   const apronLit = new Float64Array(APRON_ROWS * 3);
 
@@ -339,18 +407,17 @@ function buildWorld(): World {
   hexInto(COLORS.foliageLit, 1, foliageLit, 0);
   hexInto(COLORS.mountain, 1, mountLo, 0);
   hexInto(COLORS.mountainRim, 1, mountHi, 0);
-  hexInto(COLORS.mountainRim, 1, rimRGB, 0);
   for (let r = 0; r < APRON_ROWS; r++) {
     hexInto(COLORS.night0, APRON_MUL[r], apronRGB, r * 3);
-    hexInto(COLORS.shoulder, 1.35 * APRON_MUL[r], apronLit, r * 3);
+    hexInto(COLORS.shoulder, APRON_LIT_MUL * APRON_MUL[r], apronLit, r * 3);
   }
 
-  // Отношение «ствол / листва»: цвет вершины умножается на цвет инстанса.
-  const trunk = new Float64Array(3);
-  hexInto(COLORS.trunk, 1, trunk, 0);
-  const tr = clamp(trunk[0] / Math.max(foliage[0], 1e-4), 0, 2);
-  const tg = clamp(trunk[1] / Math.max(foliage[1], 1e-4), 0, 2);
-  const tb = clamp(trunk[2] / Math.max(foliage[2], 1e-4), 0, 2);
+  // Отношение «подсвеченная хвоя / хвоя»: цвет вершины умножается на цвет
+  // инстанса, поэтому кромке достаётся не своя яркость, а именно это число.
+  // Зажим — страховка на случай, если в палитре `foliage` уйдёт в ноль.
+  const lr = clamp(foliageLit[0] / Math.max(foliage[0], 1e-4), 0, 8);
+  const lg = clamp(foliageLit[1] / Math.max(foliage[1], 1e-4), 0, 8);
+  const lb = clamp(foliageLit[2] / Math.max(foliage[2], 1e-4), 0, 8);
 
   /* --- материалы --- */
 
@@ -368,7 +435,9 @@ function buildWorld(): World {
     transparent: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
-    toneMapped: false,
+    // Тонмаппинг НЕ отключаем: кромка — атмосферное явление, а не источник
+    // света. С `toneMapped: false` она вела бы себя по-разному на пресетах
+    // с bloom (композер, тонмаппинг в OutputPass) и без него (прямо в холст).
     fog: false,
     side: THREE.DoubleSide,
   });
@@ -401,18 +470,16 @@ function buildWorld(): World {
 
   /* --- лес --- */
 
-  const treeGeom = buildConifer(tr, tg, tb);
+  const treeGeom = buildConifer(lr, lg, lb);
   geoms.push(treeGeom);
   const trees = new THREE.InstancedMesh(treeGeom, matTree, TREE_POOL);
   trees.frustumCulled = false;
   trees.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  hideSlot(_m4);
+  // Цвета инстансов заводим заранее: в кадре останется только переписать те,
+  // в чьих слотах сменилось дерево. Матрицы не трогаем — `trees.count` не
+  // пускает в отрисовку ни один слот, который не был заполнен в этом кадре.
   _col.setRGB(1, 1, 1);
-  for (let i = 0; i < TREE_POOL; i++) {
-    trees.setMatrixAt(i, _m4);
-    // Цвет инстанса создаём заранее: в кадре останется только пометить грязным.
-    trees.setColorAt(i, _col);
-  }
+  for (let i = 0; i < TREE_POOL; i++) trees.setColorAt(i, _col);
   trees.count = 0;
   group.add(trees);
 
@@ -428,18 +495,18 @@ function buildWorld(): World {
     apron,
     trees,
     keys,
+    matRange: { start: 0, count: 0 },
     foliage,
-    foliageLit,
     mountLo,
     mountHi,
-    rimRGB,
     apronRGB,
     apronLit,
+    ridgeBase: Number.NaN,
+    apronBase: Number.NaN,
     cb: noTree,
     slot: 0,
-    used: 0,
     limit: 0,
-    range: FOG.far,
+    range: TREE_RANGE[1],
     laneMax: 40,
     camS: 0,
     camX: 0,
@@ -458,12 +525,19 @@ function noTree(_t: Tree) {}
 
 /* ---------- хребты ---------- */
 
-function drawRidge(w: World, g: Game, ridge: (s: number, side: -1 | 1) => number) {
-  const camS = g.s;
-  const camX = g.x;
-  // База на сетке: пока камера внутри клетки, `ridge()` спрашивают в тех же
-  // точках, и гребень стоит на месте вместо того, чтобы переливаться.
-  const base = Math.floor(camS / RIDGE_STEP) * RIDGE_STEP - RIDGE_BACK;
+/**
+ * Пересобрать обе ленты хребта в системе координат клетки `base`.
+ *
+ * Дистанция до камеры известна с точностью до клетки: камера гуляет внутри
+ * [base + RIDGE_BACK, base + RIDGE_BACK + RIDGE_STEP), берём середину.
+ */
+function buildRidgeStrips(
+  w: World,
+  base: number,
+  ridge: (s: number, side: -1 | 1) => number,
+) {
+  const bx = roadX(base);
+  const by = roadY(base);
 
   for (let k = 0; k < 2; k++) {
     const side: -1 | 1 = k === 0 ? -1 : 1;
@@ -477,88 +551,108 @@ function drawRidge(w: World, g: Game, ridge: (s: number, side: -1 | 1) => number
 
     for (let i = 0; i < RIDGE_COLS; i++) {
       const s = base + i * RIDGE_STEP;
-      const d = s - camS;
+      const d = i * RIDGE_STEP - RIDGE_BACK - RIDGE_STEP * 0.5;
       const off = RIDGE_LANE + RIDGE_WANDER * (noise1(s * RIDGE_NOISE + seed) * 2 - 1);
-      const x = localX(s, side * off, camS, camX);
-      const z = localZ(s, camS);
-      const crest = localY(s, ridge(s, side), camS);
-      const mid = localY(s, RIDGE_MID_Y, camS);
-      const bot = localY(s, RIDGE_BOT_Y, camS);
+      const dy = roadY(s) - by;
+      const x = roadX(s) - bx + side * off;
+      const z = base - s;
+      const crest = dy + ridge(s, side);
+      const mid = dy + RIDGE_MID_Y;
+      const bot = dy + RIDGE_BOT_Y;
       // Дальний край не обрывается, а уходит в дымку — иначе у точки схода
       // висела бы вертикальная кромка ленты.
       const a = smoothstep(RIDGE_FAR, RIDGE_FADE, d);
-      const haze = smoothstep(700, RIDGE_FAR, d);
-      const hz = 0.16 + 0.34 * haze;
+      const haze = smoothstep(RIDGE_HAZE_D0, RIDGE_FAR, d);
+      const hz = lerp(RIDGE_HAZE_LO, RIDGE_HAZE_HI, haze);
+      // Один цвет на всю колонку: гора — плоский силуэт, светлеет только от
+      // дистанции. Подсветка одного гребня делала из неё валик, а не массу.
+      const mr = lerp(w.mountLo[0], w.mountHi[0], hz);
+      const mg = lerp(w.mountLo[1], w.mountHi[1], hz);
+      const mb = lerp(w.mountLo[2], w.mountHi[2], hz);
 
       /* тело: подножие (прозрачное) → масса → гребень */
       bp[pi] = x;
       bp[pi + 1] = bot;
       bp[pi + 2] = z;
-      bc[ci] = w.mountLo[0];
-      bc[ci + 1] = w.mountLo[1];
-      bc[ci + 2] = w.mountLo[2];
+      bc[ci] = mr;
+      bc[ci + 1] = mg;
+      bc[ci + 2] = mb;
       bc[ci + 3] = 0;
 
       bp[pi + 3] = x;
       bp[pi + 4] = mid;
       bp[pi + 5] = z;
-      bc[ci + 4] = w.mountLo[0];
-      bc[ci + 5] = w.mountLo[1];
-      bc[ci + 6] = w.mountLo[2];
+      bc[ci + 4] = mr;
+      bc[ci + 5] = mg;
+      bc[ci + 6] = mb;
       bc[ci + 7] = a;
 
       bp[pi + 6] = x;
       bp[pi + 7] = crest;
       bp[pi + 8] = z;
-      bc[ci + 8] = lerp(w.mountLo[0], w.mountHi[0], hz);
-      bc[ci + 9] = lerp(w.mountLo[1], w.mountHi[1], hz);
-      bc[ci + 10] = lerp(w.mountLo[2], w.mountHi[2], hz);
+      bc[ci + 8] = mr;
+      bc[ci + 9] = mg;
+      bc[ci + 10] = mb;
       bc[ci + 11] = a;
 
-      /* кромка: тонкая аддитивная линия, гаснущая в обе стороны от гребня */
+      /* кромка: свет лежит на склоне под гребнем и почти не выходит выше него */
       const th = clamp(d * RIM_K, RIM_MIN, RIM_MAX);
-      const glow = a * (0.55 + 0.45 * haze);
+      const glow = a * smoothstep(RIM_D0, RIM_D1, d) * lerp(RIM_LO, RIM_HI, haze);
       rp[pi] = x;
-      rp[pi + 1] = crest - th * 0.6;
+      rp[pi + 1] = crest - th * RIM_DOWN;
       rp[pi + 2] = z;
-      rc[ci] = w.rimRGB[0];
-      rc[ci + 1] = w.rimRGB[1];
-      rc[ci + 2] = w.rimRGB[2];
+      rc[ci] = w.mountHi[0];
+      rc[ci + 1] = w.mountHi[1];
+      rc[ci + 2] = w.mountHi[2];
       rc[ci + 3] = 0;
 
       rp[pi + 3] = x;
       rp[pi + 4] = crest;
       rp[pi + 5] = z;
-      rc[ci + 4] = w.rimRGB[0];
-      rc[ci + 5] = w.rimRGB[1];
-      rc[ci + 6] = w.rimRGB[2];
+      rc[ci + 4] = w.mountHi[0];
+      rc[ci + 5] = w.mountHi[1];
+      rc[ci + 6] = w.mountHi[2];
       rc[ci + 7] = glow;
 
       rp[pi + 6] = x;
-      rp[pi + 7] = crest + th * 1.4;
+      rp[pi + 7] = crest + th * RIM_UP;
       rp[pi + 8] = z;
-      rc[ci + 8] = w.rimRGB[0];
-      rc[ci + 9] = w.rimRGB[1];
-      rc[ci + 10] = w.rimRGB[2];
+      rc[ci + 8] = w.mountHi[0];
+      rc[ci + 9] = w.mountHi[1];
+      rc[ci + 10] = w.mountHi[2];
       rc[ci + 11] = 0;
 
       pi += 9;
       ci += 12;
     }
 
-    w.body[k].posAttr.needsUpdate = true;
-    w.body[k].colAttr.needsUpdate = true;
-    w.rim[k].posAttr.needsUpdate = true;
-    w.rim[k].colAttr.needsUpdate = true;
+    stripDirty(w.body[k]);
+    stripDirty(w.rim[k]);
+  }
+}
+
+function drawRidge(w: World, g: Game, ridge: (s: number, side: -1 | 1) => number) {
+  const base = Math.floor(g.s / RIDGE_STEP) * RIDGE_STEP - RIDGE_BACK;
+  if (base !== w.ridgeBase) {
+    w.ridgeBase = base;
+    buildRidgeStrips(w, base, ridge);
+  }
+  // Сдвиг из системы клетки в кадр камеры — ровно то же, что делают
+  // localX/localY/localZ, но один раз на ленту, а не на каждую вершину.
+  const dx = roadX(base) - roadX(g.s) - g.x;
+  const dy = roadY(base) - roadY(g.s);
+  const dz = g.s - base;
+  for (let k = 0; k < 2; k++) {
+    w.body[k].mesh.position.set(dx, dy, dz);
+    w.rim[k].mesh.position.set(dx, dy, dz);
   }
 }
 
 /* ---------- насыпь ---------- */
 
-function drawApron(w: World, g: Game) {
-  const camS = g.s;
-  const camX = g.x;
-  const base = Math.floor(camS / APRON_STEP) * APRON_STEP - APRON_BACK;
+function buildApronStrips(w: World, base: number) {
+  const bx = roadX(base);
+  const by = roadY(base);
 
   for (let k = 0; k < 2; k++) {
     const side = k === 0 ? -1 : 1;
@@ -570,9 +664,17 @@ function drawApron(w: World, g: Game) {
 
     for (let i = 0; i < APRON_COLS; i++) {
       const s = base + i * APRON_STEP;
-      const d = s - camS;
+      const d = i * APRON_STEP - APRON_BACK - APRON_STEP * 0.5;
+      const rx = roadX(s) - bx;
+      const ry = roadY(s) - by;
+      const z = base - s;
       // Свет фар выхватывает ближнюю обочину, дальше склон уходит в чёрное.
-      const near = smoothstep(150, 8, d);
+      const near = smoothstep(APRON_LIT_D, 25, d);
+      const dark = lerp(
+        APRON_DARK_MIN,
+        1,
+        smoothstep(APRON_DARK_D1, APRON_DARK_D0, d),
+      );
       // За концом дорожной ленты внутренний край съезжает к осевой: обе
       // насыпи встречаются на x = 0 и закрывают щель у точки схода.
       const seal = 1 - smoothstep(APRON_SEAL0, APRON_SEAL1, d);
@@ -581,15 +683,15 @@ function drawApron(w: World, g: Game) {
         const amp = APRON_BUMP[r];
         const bump =
           amp > 0 ? amp * (noise1(s * APRON_NOISE + r * 3.7 + seed) * 2 - 1) : 0;
-        pos[pi] = localX(s, side * ax, camS, camX);
-        pos[pi + 1] = localY(s, slopeY(ax) + bump, camS);
-        pos[pi + 2] = localZ(s, camS);
+        pos[pi] = rx + side * ax;
+        pos[pi + 1] = ry + slopeY(ax) + bump;
+        pos[pi + 2] = z;
 
         const j = r * 3;
         const lit = near * APRON_NEAR[r];
-        col[ci] = lerp(w.apronRGB[j], w.apronLit[j], lit);
-        col[ci + 1] = lerp(w.apronRGB[j + 1], w.apronLit[j + 1], lit);
-        col[ci + 2] = lerp(w.apronRGB[j + 2], w.apronLit[j + 2], lit);
+        col[ci] = lerp(w.apronRGB[j], w.apronLit[j], lit) * dark;
+        col[ci + 1] = lerp(w.apronRGB[j + 1], w.apronLit[j + 1], lit) * dark;
+        col[ci + 2] = lerp(w.apronRGB[j + 2], w.apronLit[j + 2], lit) * dark;
         col[ci + 3] = 1;
 
         pi += 3;
@@ -597,9 +699,20 @@ function drawApron(w: World, g: Game) {
       }
     }
 
-    w.apron[k].posAttr.needsUpdate = true;
-    w.apron[k].colAttr.needsUpdate = true;
+    stripDirty(w.apron[k]);
   }
+}
+
+function drawApron(w: World, g: Game) {
+  const base = Math.floor(g.s / APRON_STEP) * APRON_STEP - APRON_BACK;
+  if (base !== w.apronBase) {
+    w.apronBase = base;
+    buildApronStrips(w, base);
+  }
+  const dx = roadX(base) - roadX(g.s) - g.x;
+  const dy = roadY(base) - roadY(g.s);
+  const dz = g.s - base;
+  for (let k = 0; k < 2; k++) w.apron[k].mesh.position.set(dx, dy, dz);
 }
 
 /* ---------- лес ---------- */
@@ -611,7 +724,11 @@ function drawApron(w: World, g: Game) {
 function placeTree(w: World, t: Tree) {
   if (w.slot >= w.limit) return;
   const lane = t.lane;
-  const al = lane < 0 ? -lane : lane;
+  const left = lane < 0;
+  const raw = left ? -lane : lane;
+  // Ближний ряд отодвигаем от полотна: генератор ставит его в 9.9 м, и в кадре
+  // он вырастает стеной от земли до неба.
+  const al = raw + TREE_PUSH * smoothstep(TREE_PUSH_FAR, TREE_PUSH_NEAR, raw);
   if (al > w.laneMax) return;
 
   // У дальней кромки дерево не выскакивает, а вырастает: пул конечен, и обрыв
@@ -620,13 +737,16 @@ function placeTree(w: World, t: Tree) {
   if (grow <= 0.002) return;
 
   const i = w.slot++;
-  const h = t.h * grow;
-  const wide = h * (0.78 + 0.44 * t.v);
-  _m4.makeRotationY(t.v * TAU * 5.7);
+  const tall = t.h < TREE_H_MAX ? t.h : TREE_H_MAX;
+  const h = tall * lerp(TREE_H_LO, 1, smoothstep(TREE_H_D0, TREE_H_D1, al)) * grow;
+  const wide = h * (0.66 + 0.34 * t.v);
+  // Разворот: подсвеченная грань смотрит в сторону дороги (для левой обочины
+  // это +x, для правой −x), плюс небольшой разброс ради силуэта.
+  _m4.makeRotationY((left ? 0 : Math.PI) + (t.v - 0.5) * 0.9);
   _sc.set(wide, h, wide);
   _m4.scale(_sc);
   _m4.setPosition(
-    localX(t.s, lane, w.camS, w.camX),
+    localX(t.s, left ? -al : al, w.camS, w.camX),
     localY(t.s, slopeY(al) + TREE_SINK, w.camS),
     localZ(t.s, w.camS),
   );
@@ -637,26 +757,31 @@ function placeTree(w: World, t: Tree) {
   const key = t.s * 1024 + lane;
   if (w.keys[i] !== key) {
     w.keys[i] = key;
-    const lit = smoothstep(31, 10.5, al) * (0.42 + 0.58 * t.v);
-    const bright = 0.86 + 0.46 * lit + 0.14 * t.v;
-    _col.setRGB(
-      lerp(w.foliage[0], w.foliageLit[0], lit) * bright,
-      lerp(w.foliage[1], w.foliageLit[1], lit) * bright,
-      lerp(w.foliage[2], w.foliageLit[2], lit) * bright,
-    );
+    // Только затемнение: ярче `COLORS.foliage` дерево не станет никогда,
+    // холодную кромку даёт запечённый в вершины блик, а не этот множитель.
+    const lit = smoothstep(28, 11, al);
+    const k = 0.8 + 0.12 * lit + 0.08 * t.v;
+    _col.setRGB(w.foliage[0] * k, w.foliage[1] * k, w.foliage[2] * k);
     w.trees.setColorAt(i, _col);
     w.colDirty = true;
   }
 }
 
 function finishTrees(w: World) {
-  for (let i = w.slot; i < w.used; i++) {
-    hideSlot(_m4);
-    w.trees.setMatrixAt(i, _m4);
-  }
-  w.used = w.slot;
+  // Хвосты пула прятать незачем: `count` не пускает их в отрисовку.
   w.trees.count = w.slot;
-  w.trees.instanceMatrix.needsUpdate = true;
+  if (w.slot > 0) {
+    // Грузим на GPU только занятую часть буфера матриц, а не весь пул: на
+    // экономном пресете это 90 инстансов из 280. Диапазон нулевой длины в
+    // WebGL2 означает «до конца массива», поэтому пустой кадр просто
+    // пропускаем — грузить всё равно нечего.
+    const im = w.trees.instanceMatrix;
+    const ranges = im.updateRanges;
+    if (ranges.length === 0) ranges.push(w.matRange);
+    w.matRange.start = 0;
+    w.matRange.count = w.slot * 16;
+    im.needsUpdate = true;
+  }
   if (w.colDirty && w.trees.instanceColor) w.trees.instanceColor.needsUpdate = true;
 }
 

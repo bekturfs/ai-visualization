@@ -6,9 +6,14 @@
  *   1. купол-градиент (ShaderMaterial, BackSide) — ночь от зенита к горизонту;
  *   2. звёздное поле (Points, мерцание считает шейдер по одному uniform-времени);
  *   3. воронка звёздных треков (глава 2) — тангенциальные штрихи вокруг оси зенита;
- *   4. туманность (глава 1) — три аддитивные плоскости с процедурным вихрем;
+ *   4. туманность (глава 1) — две аддитивные плоскости с процедурным вихрем;
  *   5. метеоры (глава 0) — пул инстансов, падают по общему наклону;
  *   6. звезда-блик (главы 0 и 3) — жёсткий четырёхлучевой крест плюс ореол.
+ *
+ * Палитра неба холодная и только холодная: тёмно-синий у зенита, чуть более
+ * светлый холодный синий у горизонта. Ничего тёплого — ни в куполе, ни в
+ * заревах, ни в оттенках звёзд: аддитивный блендинг собирает любую тёплую
+ * примесь в розовую дымку над склонами, а в референсах её нет.
  *
  * Главы перекрёстно затухают: цель прозрачности берётся из таблицы весов по
  * `g.chapter`, последние `SKY.fade` доли главы подмешивают следующую, а сама
@@ -53,8 +58,12 @@ const VORTEX_SPREAD = 1.18;
 /** Скорость вращения воронки, рад/с. */
 const VORTEX_RATE = 0.032;
 
-/** Направление на туманность: верх-лево, как в f_003 (краем уходит за кромку). */
-const NEBULA_DIR = new THREE.Vector3(-0.42, 0.54, -1).normalize();
+/**
+ * Направление на туманность: верх-лево, как в f_003. Азимут намеренно скромный
+ * (~17°): на телефоне горизонтальное поле зрения всего ±19°, и при −23° центр
+ * туманности уезжал за кромку кадра — оставался бы виден только край.
+ */
+const NEBULA_DIR = new THREE.Vector3(-0.3, 0.54, -1).normalize();
 /** Направление на звезду-блик: верх-право, как в f_001; видна и в портрете. */
 const FLARE_DIR = new THREE.Vector3(0.3, 0.6, -1).normalize();
 
@@ -63,8 +72,15 @@ const METEOR_SLANT = 0.3;
 /** Длина пролёта метеора в единицах касательной плоскости. */
 const METEOR_TRAVEL = 2.6;
 
-/** Поворот неба за пройденный метр, рад. */
+/** Поворот неба за пройденный метр, рад (наклон дрейфа у нулевой дистанции). */
 const SPIN_PER_M = 0.000028;
+/**
+ * Предел дрейфа неба, рад. Дрейф — синус от дистанции, а не прямая: линейный
+ * увод за 20 км разворачивал небо на 30° и уносил туманность, воронку и блик
+ * за кромку кадра. Синус даёт тот же наклон у старта, но никогда не выходит
+ * за ±SPIN_LIMIT (период ~54 км — разворота никто не заметит).
+ */
+const SPIN_LIMIT = 0.24;
 /** Доля курса, на которую небо отстаёт при рулении (параллакс, не качели). */
 const YAW_PARALLAX = 0.05;
 
@@ -74,15 +90,22 @@ const YAW_PARALLAX = 0.05;
  * сломается, просто цикл станет короче, чем в конфиге.
  *
  * Ненулевые «остатки» в чужих главах намеренны: небо не выключается щелчком.
+ * Но остаток стоит ровно столько же заливки, сколько полная яркость — прозрачный
+ * квад растеризуется целиком. Поэтому остатки оставлены только там, где их
+ * видно (дымка туманности под воронкой в f_005, редкие метеоры), а у дорогих
+ * слоёв в чужих главах — честный ноль, чтобы их можно было выключить совсем.
  */
 const W_STARS = [1, 0.9, 0.46, 1] as const;
-const W_NEBULA = [0, 1, 0.14, 0.05] as const;
-const W_TRAIL = [0, 0.04, 1, 0] as const;
+const W_NEBULA = [0, 1, 0.12, 0] as const;
+const W_TRAIL = [0, 0, 1, 0] as const;
 const W_METEOR = [1, 0.14, 0, 0.08] as const;
 const W_FLARE = [1, 0.3, 0.12, 1] as const;
 
 /** Скорость подтягивания прозрачностей, 1/с. */
 const FADE_RATE = 1.6;
+
+/** Сколько плоскостей у туманности. Каждая — заливка заметной доли кадра. */
+const NEB_LAYERS = 2;
 
 /** Порядок отрисовки всех групп неба: раньше всего остального в сцене. */
 const GROUP_ORDER = -1000;
@@ -176,9 +199,14 @@ function fbm2(x: number, y: number, octaves: number): number {
   return sum / norm;
 }
 
-/** Спрайт звезды: мягкий диск с еле заметным крестиком, чтобы крупные искрились. */
+/**
+ * Спрайт звезды: мягкий диск с еле заметным крестиком, чтобы крупные искрились.
+ * 32² — не экономия ради экономии: точка на экране 3…9 CSS-пикселей, то есть
+ * выборка всё равно идёт из третьего-четвёртого мипа. Больше текселей просто
+ * некуда девать, а генерация и кэш дешевеют вчетверо.
+ */
 function makeStarTex(): THREE.CanvasTexture | null {
-  const size = 64;
+  const size = 32;
   const ctx = ctx2d(size);
   if (!ctx) return null;
   const w = ctx.canvas.width;
@@ -209,9 +237,9 @@ function makeStarTex(): THREE.CanvasTexture | null {
   return toTexture(ctx, img);
 }
 
-/** Мягкий ореол — подложка под блик. */
+/** Мягкий ореол — подложка под блик. Гладкий экспоненциальный спад, 96² хватает. */
 function makeGlowTex(): THREE.CanvasTexture | null {
-  const size = 128;
+  const size = 96;
   const ctx = ctx2d(size);
   if (!ctx) return null;
   const w = ctx.canvas.width;
@@ -248,7 +276,8 @@ function makeStreakTex(head: number): THREE.CanvasTexture | null {
   const w = ctx.canvas.width;
   const img = ctx.createImageData(w, w);
   const d = img.data;
-  const warm = hexRgb(COLORS.head, RGB_A);
+  // Оба конца холодные: `head` — это голубоватый белый фар, не тёплый.
+  const hot = hexRgb(COLORS.head, RGB_A);
   const cool = hexRgb(COLORS.neon, RGB_B);
   for (let y = 0; y < w; y++) {
     // v = 0 у «хвоста», v = 1 у «головы» (текстура читается снизу вверх).
@@ -265,9 +294,9 @@ function makeStreakTex(head: number): THREE.CanvasTexture | null {
       const a = clamp01(along * across + headHot * Math.exp(-q * q * 1.6));
       const t = clamp01(1 - along * 1.3);
       const i = (y * w + x) * 4;
-      d[i] = Math.round(lerp(warm[0], cool[0], t));
-      d[i + 1] = Math.round(lerp(warm[1], cool[1], t));
-      d[i + 2] = Math.round(lerp(warm[2], cool[2], t));
+      d[i] = Math.round(lerp(hot[0], cool[0], t));
+      d[i + 1] = Math.round(lerp(hot[1], cool[1], t));
+      d[i + 2] = Math.round(lerp(hot[2], cool[2], t));
       d[i + 3] = Math.round(a * 255);
     }
   }
@@ -278,8 +307,7 @@ function makeStreakTex(head: number): THREE.CanvasTexture | null {
  * Звезда-блик: раскалённое ядро, длинный горизонтальный и короткий вертикальный
  * лучи, слабые диагонали и ореол. Ровно тот крест, что в f_001 и f_007.
  */
-function makeFlareTex(): THREE.CanvasTexture | null {
-  const size = 256;
+function makeFlareTex(size: number): THREE.CanvasTexture | null {
   const ctx = ctx2d(size);
   if (!ctx) return null;
   const w = ctx.canvas.width;
@@ -326,9 +354,25 @@ function makeFlareTex(): THREE.CanvasTexture | null {
   return toTexture(ctx, img);
 }
 
+/** Отсчётов в таблице рваной кромки туманности. */
+const RIM_N = 192;
+
 /**
- * Туманность: полярная закрутка + ридж-фрактал = вихрь с нитями и рукавами.
- * Самый заметный элемент рила, поэтому считается попиксельно, а не градиентами.
+ * Туманность — подпись рила (f_003): огромная закрученная синяя масса, нити,
+ * горячее ядро и рваный, а не циркульный край. Строится попиксельно, потому что
+ * ни один набор радиальных градиентов такого не даёт.
+ *
+ * Пять приёмов, в порядке важности:
+ *   1. дифференциальная закрутка полярных координат (центр проворачивается
+ *      сильнее края) — она и превращает шум в спираль;
+ *   2. центр вихря смещён относительно центра диска — иначе получается
+ *      идеально симметричная вертушка, а не облако;
+ *   3. домен-варп низкой частотой — рукава расслаиваются на отдельные нити;
+ *   4. ридж-фрактал в пятой степени — нити тонкие, а не ватные;
+ *   5. радиус обрезки, гуляющий по углу, — край клочковатый.
+ *
+ * Горячее ядро запечено сюда же: раньше это была третья аддитивная плоскость,
+ * а плоскость — это заливка полкадра, тогда как в текстуре ядро бесплатно.
  */
 function makeNebulaTex(size: number): THREE.CanvasTexture | null {
   const ctx = ctx2d(size);
@@ -339,39 +383,66 @@ function makeNebulaTex(size: number): THREE.CanvasTexture | null {
   const core = hexRgb(COLORS.nebulaCore, RGB_A);
   const mid = hexRgb(COLORS.nebulaMid, RGB_B);
   const edge = hexRgb(COLORS.nebulaEdge, RGB_C);
-  const inv = 2 / w;
+
+  // Кромка зависит только от угла — считаем её один раз в таблицу, а не три
+  // октавы шума на каждый из ~80 000 пикселей. Таблица длиннее периода на два
+  // отсчёта: cos/sin периодичны, поэтому «лишние» отсчёты совпадают с началом —
+  // шва на ±π нет, и правый сосед существует даже при atan2 ровно = π.
+  const rimLut = new Float64Array(RIM_N + 2);
+  for (let k = 0; k < RIM_N + 2; k++) {
+    const a = (k / RIM_N) * TAU;
+    rimLut[k] = 0.72 + 0.26 * fbm2(Math.cos(a) * 1.6 + 19.4, Math.sin(a) * 1.6 - 7.2, 3);
+  }
+
+  const step = 2 / w;
   for (let y = 0; y < w; y++) {
-    const ny = (y + 0.5) * inv - 1;
+    const ny = (y + 0.5) * step - 1;
     for (let x = 0; x < w; x++) {
-      const nx = (x + 0.5) * inv - 1;
+      const nx = (x + 0.5) * step - 1;
       const i = (y * w + x) * 4;
       const r = Math.sqrt(nx * nx + ny * ny);
       if (r >= 1) {
         d[i + 3] = 0;
         continue;
       }
-      // Чем ближе к центру, тем сильнее проворот — получается вихрь, а не пятно.
-      const tw = Math.atan2(ny, nx) + 2.3 / (r + 0.32) + 1.2 * r;
-      const wx = Math.cos(tw) * r;
-      const wy = Math.sin(tw) * r;
-      const f = fbm2(wx * 4.6 + 7.3, wy * 4.6 - 2.1, 5);
-      // Ридж-фрактал в пятой степени даёт тонкие нити вместо ватного пятна.
+      const ang = Math.atan2(ny, nx);
+      // Полярные координаты вихря считаются вокруг смещённого центра, обрезка
+      // кромки — вокруг настоящего. Отсюда и асимметрия массы.
+      const ox = nx + 0.1;
+      const oy = ny - 0.07;
+      const rc = Math.sqrt(ox * ox + oy * oy);
+      const tw = Math.atan2(oy, ox) + 2.15 / (rc + 0.3) + 1.7 * rc;
+      const px = Math.cos(tw) * rc;
+      const py = Math.sin(tw) * rc;
+      const wx = px + (fbm2(px * 1.9 + 11.7, py * 1.9 - 4.3, 2) - 0.5) * 0.66;
+      const wy = py + (fbm2(py * 1.9 + 5.1, px * 1.9 - 8.9, 2) - 0.5) * 0.66;
+      const f = fbm2(wx * 6.1 + 7.3, wy * 6.1 - 2.1, 4);
       const ridge = 1 - Math.abs(f * 2 - 1);
       const rr = ridge * ridge;
       const fil = rr * rr * ridge;
-      const arms = 0.5 + 0.5 * Math.sin(tw * 2 + r * 4.2);
-      // Крупный шум прогрызает в туманности тёмные провалы — как в f_003.
-      const voids = 0.3 + 0.7 * fbm2(wx * 1.5 - 3.1, wy * 1.5 + 5.7, 3);
-      const halo = Math.exp(-r * r * 3.2);
-      const rim = smoothstep(1, 0.4, r);
-      const dens = rim * voids * (0.17 * halo + 0.1 * f + 1.5 * fil * (0.22 + 0.78 * arms));
-      const I = clamp01(dens * 1.35);
-      const t1 = smoothstep(0.02, 0.34, I);
-      const t2 = smoothstep(0.42, 1, I);
+      // Полтора рукава, а не два: целое число даёт узнаваемую вертушку.
+      const arms = 0.5 + 0.5 * Math.sin(tw * 1.7 + rc * 3);
+      const voids = 0.3 + 0.7 * fbm2(px * 1.35 - 3.1, py * 1.35 + 5.7, 2);
+
+      const lu = ((ang + Math.PI) / TAU) * RIM_N;
+      const lk = lu | 0;
+      const rim0 = lerp(rimLut[lk], rimLut[lk + 1], lu - lk);
+      // Спад длинный: от трети радиуса до самой кромки — так край не обрывается,
+      // а расходится клочьями.
+      const rim = smoothstep(rim0, rim0 * 0.3, r);
+
+      const halo = Math.exp(-rc * rc * 2.4);
+      // Ядро — сгущение тех же нитей, а не гладкий шар: иначе снова блин.
+      const hot = Math.exp(-rc * rc * 11) * clamp01(0.26 + 1.7 * fil);
+      const dens =
+        rim * voids * (0.22 * halo + 0.2 * f + 1.5 * fil * (0.34 + 0.66 * arms)) + 0.42 * hot;
+      const I = clamp01(dens * 1.5);
+      const t1 = smoothstep(0.02, 0.3, I);
+      const t2 = smoothstep(0.4, 0.95, I);
       d[i] = Math.round(lerp(lerp(edge[0], mid[0], t1), core[0], t2));
       d[i + 1] = Math.round(lerp(lerp(edge[1], mid[1], t1), core[1], t2));
       d[i + 2] = Math.round(lerp(lerp(edge[2], mid[2], t1), core[2], t2));
-      d[i + 3] = Math.round(clamp01(Math.pow(I, 1.15) * 1.25) * 255);
+      d[i + 3] = Math.round(clamp01(Math.pow(I, 1.05) * 1.35) * 255);
     }
   }
   return toTexture(ctx, img);
@@ -400,26 +471,39 @@ void main() {
   vec3 dir = normalize(vDir);
   float h = dir.y;
 
-  // Ночь темнее всего в зените и светлеет к горизонту — как в рефересах.
-  // Светлая приземная полоса узкая — её почти целиком закрывают склоны.
-  vec3 col = mix(uHorizon, uMid, smoothstep(-0.02, 0.16, h));
-  col = mix(col, uZenith, smoothstep(0.16, 0.95, h));
+  // База — ночь: у горизонта night1, к зениту почти чёрный night0. Никакого
+  // светлого пояса по всей нижней полусфере: в референсах небо тёмно-синее до
+  // самых склонов, а «рассветную» полосу давал именно широкий ramp до night2.
+  vec3 col = mix(uMid, uZenith, smoothstep(0.03, 0.82, h));
 
-  // Зарево над дорогой: сильнее прямо по курсу (−Z). Узкое: оно должно лежать
-  // у самой кромки склонов, а не заливать полнеба.
+  // Единственный источник свечения внизу — узкая холодная кромка над
+  // горизонтом. Она нужна, чтобы склоны отделялись от неба, и только для
+  // этого: e^(-10h) гасит её за ~12° вверх, а smoothstep — вниз.
+  float lift = exp(-max(h, 0.0) * 10.0) * smoothstep(-0.16, 0.015, h);
+  col += uHorizon * (lift * 0.26);
+
+  // Зарево по курсу (−Z), от скорости. Тоже холодное: uGlowColor — nebulaMid.
   float fwd = max(-dir.z, 0.0);
-  col += uGlowColor * (exp(-abs(h) * 15.0) * (0.10 + 0.90 * fwd * fwd) * uGlow);
+  col += uGlowColor * (lift * (0.08 + 0.92 * fwd * fwd) * uGlow);
 
   // Еле заметная широкая полоса «млечного пути» по наклонному большому кругу.
   float b = dot(dir, vec3(0.62, 0.40, 0.67));
   col += uHorizon * (exp(-b * b * 9.0) * uBand);
 
-  // Ниже горизонта купол гаснет: там склоны и дорога, лишнее свечение мешает.
-  col *= mix(0.22, 1.0, smoothstep(-0.22, 0.02, h));
+  // Ниже горизонта купол почти гаснет: там склоны и дорога.
+  col *= mix(0.08, 1.0, smoothstep(-0.20, 0.01, h));
 
-  // Дизеринг убивает полосы на восьмибитном градиенте.
-  float dith = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
-  col += dith * 0.004;
+  // Замок на «только холодный синий». Палитра и так синяя, но здесь это
+  // становится свойством купола, а не совпадением: красный и зелёный не могут
+  // обогнать синий, поэтому ни розового, ни фиолетового у горизонта не будет
+  // ни при каком тонмаппинге и ни при какой правке палитры.
+  col.r = min(col.r, col.b * 0.42);
+  col.g = min(col.g, col.b * 0.80);
+
+  // Дизеринг убивает полосы на восьмибитном градиенте. Без sin(): на
+  // софтверном растеризаторе тригонометрия на каждый пиксель фона заметна.
+  float dith = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5;
+  col += dith * 0.0035;
 
   gl_FragColor = vec4(max(col, 0.0), 1.0);
   #include <tonemapping_fragment>
@@ -507,16 +591,20 @@ function buildSky(q: Quality): SkyRes {
 
   /* --- 1. купол --- */
 
-  const domeGeo = new THREE.SphereGeometry(R, 36, 22);
+  // Купол считается попиксельно, поэтому его тесселяция ни на что не влияет:
+  // 24×14 достаточно, чтобы нормализованное направление во фрагменте не «поехало».
+  const domeGeo = new THREE.SphereGeometry(R, 24, 14);
   geometries.push(domeGeo);
   const domeMat = new THREE.ShaderMaterial({
     uniforms: {
       uZenith: { value: new THREE.Color(COLORS.night0) },
       uMid: { value: new THREE.Color(COLORS.night1) },
       uHorizon: { value: new THREE.Color(COLORS.night2) },
-      uGlowColor: { value: new THREE.Color(COLORS.neonDeep) },
-      uGlow: { value: 0.5 },
-      uBand: { value: 0.09 },
+      // Именно nebulaMid, а не neonDeep: neonDeep — цвет неона трассы, у него
+      // заметная зелёная составляющая, и в зареве он читается голубым «днём».
+      uGlowColor: { value: new THREE.Color(COLORS.nebulaMid) },
+      uGlow: { value: 0.05 },
+      uBand: { value: 0.06 },
     },
     vertexShader: DOME_VERT,
     fragmentShader: DOME_FRAG,
@@ -563,8 +651,12 @@ function buildSky(q: Quality): SkyRes {
 
       const tint = hash2(i, 6);
       tmp.copy(cStar);
-      if (tint > 0.74) tmp.lerp(cWarm, (tint - 0.74) / 0.26);
-      else if (tint < 0.13) tmp.lerp(cCold, 0.45);
+      // Тёплых звёзд было четверть поля — и при аддитивном блендинге с bloom
+      // они складывались в ровно ту розово-бежевую дымку, которой нет ни в
+      // одном кадре референса. Осталось 6%, и те приглушены; зато почти
+      // половина поля уведена в холодный синий.
+      if (tint > 0.94) tmp.lerp(cWarm, ((tint - 0.94) / 0.06) * 0.5);
+      else if (tint < 0.46) tmp.lerp(cCold, 0.2 + 0.45 * ((0.46 - tint) / 0.46));
       // Низкие звёзды приглушены — так небо не «сыпется» на склоны.
       const dim = lerp(0.42, 1, smoothstep(STAR_Y_MIN, 0.5, y)) * (0.4 + 0.6 * m);
       col[i * 3] = tmp.r * dim;
@@ -616,7 +708,10 @@ function buildSky(q: Quality): SkyRes {
   let trails: THREE.InstancedMesh | null = null;
   let trailMat: THREE.MeshBasicMaterial | null = null;
   if (trailTex) {
-    const n = Math.max(24, Math.round(preset.stars * 0.15));
+    // 0.115, а не 0.15: каждый трек — вытянутый аддитивный квад примерно
+    // 6×250 экранных пикселей, и полтысячи таких дают заливку в треть кадра.
+    // На глаз воронка от четверти вырезанных штрихов не редеет.
+    const n = Math.max(24, Math.round(preset.stars * 0.115));
     const geo = new THREE.PlaneGeometry(1, 1);
     geometries.push(geo);
     trailMat = new THREE.MeshBasicMaterial({
@@ -664,7 +759,7 @@ function buildSky(q: Quality): SkyRes {
 
   /* --- 4. туманность --- */
 
-  const nebTex = makeNebulaTex(q === 2 ? 384 : q === 1 ? 320 : 256);
+  const nebTex = makeNebulaTex(q === 2 ? 320 : q === 1 ? 272 : 208);
   if (nebTex) textures.push(nebTex);
   const nebula = new THREE.Group();
   nebula.position.copy(NEBULA_DIR).multiplyScalar(R_NEBULA);
@@ -676,24 +771,26 @@ function buildSky(q: Quality): SkyRes {
 
   const nebulaMats: THREE.MeshBasicMaterial[] = [];
   const nebulaMeshes: THREE.Mesh[] = [];
-  const nebulaBase = new Float32Array(3);
-  const nebulaSpin = new Float32Array(3);
-  const nebulaSize = new Float32Array(3);
+  const nebulaBase = new Float32Array(NEB_LAYERS);
+  const nebulaSpin = new Float32Array(NEB_LAYERS);
+  const nebulaSize = new Float32Array(NEB_LAYERS);
   if (nebTex) {
-    const base = R_NEBULA * 0.62;
-    // подложка, основное тело, яркое ядро
-    const size = [base * 1.62, base, base * 0.6];
-    const opa = [0.34, 1, 0.6];
-    const spin = [0.009, -0.015, 0.024];
-    const tint = [COLORS.nebulaMid, 0xffffff, COLORS.nebulaCore] as const;
+    // Было три плоскости: широкая подложка, тело и ядро. Подложка одна занимала
+    // больше половины кадра, а давала только размытый ореол, который теперь
+    // нарисован в самой текстуре. Осталось две: тело и встречно вращающееся
+    // ядро — вихрь по-прежнему живой, заливки почти вдвое меньше.
+    const body = R_NEBULA * 0.86;
+    const size = [body, body * 0.49];
+    const opa = [1, 0.72];
+    const spin = [0.007, -0.019];
+    const tint = [0xffffff, COLORS.nebulaCore] as const;
     const offs = [
-      [0, 0, -R_NEBULA * 0.05],
       [0, 0, 0],
-      [base * 0.12, base * 0.08, R_NEBULA * 0.04],
+      [body * 0.07, body * 0.05, R_NEBULA * 0.04],
     ] as const;
     const geo = new THREE.PlaneGeometry(1, 1);
     geometries.push(geo);
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < NEB_LAYERS; i++) {
       const mat = new THREE.MeshBasicMaterial({
         map: nebTex,
         color: tint[i],
@@ -708,7 +805,7 @@ function buildSky(q: Quality): SkyRes {
       materials.push(mat);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(offs[i][0], offs[i][1], offs[i][2]);
-      mesh.rotation.z = i * 1.7;
+      mesh.rotation.z = i * 2.1;
       mesh.scale.set(size[i], size[i], 1);
       mesh.frustumCulled = false;
       mesh.renderOrder = -890 + i;
@@ -751,10 +848,11 @@ function buildSky(q: Quality): SkyRes {
     meteors.frustumCulled = false;
     meteors.renderOrder = -870;
     meteors.visible = false;
-    const white = new THREE.Color(0, 0, 0);
+    // Стартовый цвет — чёрный: пока метеор не «зажгли» в кадре, он не светит.
+    const off = new THREE.Color(0, 0, 0);
     for (let i = 0; i < nMet; i++) {
       meteorPhase[i] = hash2(i, 11);
-      meteors.setColorAt(i, white);
+      meteors.setColorAt(i, off);
     }
     const cWarm = new THREE.Color(COLORS.head);
     const cCold = new THREE.Color(COLORS.neon);
@@ -769,7 +867,8 @@ function buildSky(q: Quality): SkyRes {
 
   /* --- 6. звезда-блик --- */
 
-  const flareTex = makeFlareTex();
+  // На «экономно» блик рисуется без bloom и на dpr 1 — 176² там не отличить.
+  const flareTex = makeFlareTex(q === 0 ? 176 : 256);
   if (flareTex) textures.push(flareTex);
   const glowTex = makeGlowTex();
   if (glowTex) textures.push(glowTex);
@@ -872,6 +971,10 @@ interface SkyAnim {
   wFlare: number;
   spin: number;
   glow: number;
+  /** `g.s` предыдущего кадра: прыжок назад = рестарт заезда. */
+  lastS: number;
+  /** Первый кадр после монтирования — цели ставим сразу, без наплыва. */
+  fresh: boolean;
 }
 
 /* ---------- компонент ---------- */
@@ -900,7 +1003,9 @@ export function Sky({ g }: { g: Game }) {
       wMeteor: 1,
       wFlare: 1,
       spin: 0,
-      glow: 0.5,
+      glow: 0.05,
+      lastS: 0,
+      fresh: true,
     };
   }
 
@@ -933,28 +1038,59 @@ export function Sky({ g }: { g: Game }) {
     const t = anim.t;
     const calm = g.reducedMotion;
 
-    /* --- веса слоёв по главе --- */
+    /* --- цели слоёв по главе ---
+     *
+     * `g.chapter` растёт без предела, поэтому и текущая, и следующая глава
+     * берутся по модулю длины таблицы весов: глава n и глава n+4 дают ровно
+     * один набор целей. Последние `SKY.fade` доли главы подмешивают следующую
+     * — и это делает переход симметричным сам по себе: на границе слева цель
+     * равна W[ch+1] (f → 1), справа тоже W[ch+1] (новая глава, f = 0), так что
+     * затухание уходящего слоя и наплыв приходящего идут по одной кривой.
+     */
     const n = W_STARS.length;
     const ch = ((g.chapter % n) + n) % n;
     const nx = (ch + 1) % n;
     const f = SKY.fade > 0 ? smoothstep(1 - SKY.fade, 1, clamp01(g.chapterT)) : 0;
 
-    anim.wStars = damp(anim.wStars, lerp(W_STARS[ch], W_STARS[nx], f), FADE_RATE, dt);
-    anim.wNebula = damp(anim.wNebula, lerp(W_NEBULA[ch], W_NEBULA[nx], f), FADE_RATE, dt);
-    anim.wTrail = damp(anim.wTrail, lerp(W_TRAIL[ch], W_TRAIL[nx], f), FADE_RATE, dt);
-    anim.wMeteor = damp(anim.wMeteor, lerp(W_METEOR[ch], W_METEOR[nx], f), FADE_RATE, dt);
-    anim.wFlare = damp(anim.wFlare, lerp(W_FLARE[ch], W_FLARE[nx], f), FADE_RATE, dt);
+    const toStars = lerp(W_STARS[ch], W_STARS[nx], f);
+    const toNebula = lerp(W_NEBULA[ch], W_NEBULA[nx], f);
+    const toTrail = lerp(W_TRAIL[ch], W_TRAIL[nx], f);
+    const toMeteor = lerp(W_METEOR[ch], W_METEOR[nx], f);
+    const toFlare = lerp(W_FLARE[ch], W_FLARE[nx], f);
 
-    /* --- общий дрейф неба --- */
-    const spinTo = -g.s * SPIN_PER_M - g.yaw * YAW_PARALLAX;
-    anim.spin = damp(anim.spin, spinTo, 5, dt);
+    /* --- общий дрейф неба (ограниченный, см. SPIN_LIMIT) --- */
+    const spinTo =
+      -SPIN_LIMIT * Math.sin((g.s * SPIN_PER_M) / SPIN_LIMIT) - g.yaw * YAW_PARALLAX;
+    const speedFrac = clamp01(g.speed / PHYS.speedMax);
+    const glowTo = 0.03 + 0.045 * speedFrac + 0.02 * toNebula;
+
+    // Рестарт: дистанция прыгнула назад. Доигрывать кроссфейд предыдущего
+    // заезда нельзя — новая глава 0 началась бы с чужой туманностью на экране,
+    // и она бы ещё пару секунд гасла. Цели ставим мгновенно.
+    if (anim.fresh || g.s < anim.lastS - 0.5) {
+      anim.fresh = false;
+      anim.wStars = toStars;
+      anim.wNebula = toNebula;
+      anim.wTrail = toTrail;
+      anim.wMeteor = toMeteor;
+      anim.wFlare = toFlare;
+      anim.spin = spinTo;
+      anim.glow = glowTo;
+    } else {
+      anim.wStars = damp(anim.wStars, toStars, FADE_RATE, dt);
+      anim.wNebula = damp(anim.wNebula, toNebula, FADE_RATE, dt);
+      anim.wTrail = damp(anim.wTrail, toTrail, FADE_RATE, dt);
+      anim.wMeteor = damp(anim.wMeteor, toMeteor, FADE_RATE, dt);
+      anim.wFlare = damp(anim.wFlare, toFlare, FADE_RATE, dt);
+      anim.spin = damp(anim.spin, spinTo, 5, dt);
+      anim.glow = damp(anim.glow, glowTo, 1.4, dt);
+    }
+    anim.lastS = g.s;
     res.root.rotation.y = anim.spin;
 
     /* --- 1. купол --- */
-    const speedFrac = clamp01(g.speed / PHYS.speedMax);
-    anim.glow = damp(anim.glow, 0.05 + 0.06 * speedFrac + 0.03 * anim.wNebula, 1.4, dt);
     res.domeMat.uniforms.uGlow.value = anim.glow;
-    res.domeMat.uniforms.uBand.value = 0.05 + 0.07 * anim.wStars;
+    res.domeMat.uniforms.uBand.value = 0.03 + 0.05 * anim.wStars;
 
     /* --- 2. звёзды --- */
     if (res.stars && res.starMat) {
@@ -973,7 +1109,9 @@ export function Sky({ g }: { g: Game }) {
 
     /* --- 3. воронка треков --- */
     if (res.trails && res.trailMat) {
-      const on = anim.wTrail > 0.008;
+      // Порог выше «почти нуля»: слой из сотен аддитивных квадов, который никто
+      // не различит, дешевле выключить, чем нарисовать прозрачным.
+      const on = anim.wTrail > 0.02;
       res.trails.visible = on;
       if (on) {
         res.trailMat.opacity = anim.wTrail;
@@ -983,7 +1121,9 @@ export function Sky({ g }: { g: Game }) {
 
     /* --- 4. туманность --- */
     if (res.nebulaMats.length) {
-      const on = anim.wNebula > 0.006;
+      // Туманность — самая дорогая заливка неба (тело закрывает ~2/3 высоты
+      // кадра). Ниже 2% её всё равно не видно на почти чёрном небе.
+      const on = anim.wNebula > 0.02;
       res.nebula.visible = on;
       if (on) {
         const breathe = calm ? 1 : 1 + 0.022 * Math.sin(t * 0.13);
@@ -999,7 +1139,7 @@ export function Sky({ g }: { g: Game }) {
 
     /* --- 5. метеоры --- */
     if (res.meteors && res.meteorMat) {
-      const on = anim.wMeteor > 0.01;
+      const on = anim.wMeteor > 0.03;
       res.meteors.visible = on;
       if (on) {
         res.meteorMat.opacity = anim.wMeteor;

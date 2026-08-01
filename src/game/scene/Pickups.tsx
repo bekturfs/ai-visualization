@@ -2,59 +2,80 @@
  * Бонусы над дорогой: звёзды-искры (очки + немного нитро) и канистры нитро.
  *
  * Всё состояние берётся из `g.pickups` — пул фиксированного размера
- * `LIMITS.pickups`, слот инстанса жёстко соответствует индексу в пуле. Ничего
- * своего про мир этот модуль не знает и не хранит: спавн и подбор — дело
- * `worldGen` и `engine`, здесь только отрисовка.
+ * `LIMITS.pickups`. Ничего своего про мир этот модуль не знает и не хранит:
+ * спавн и подбор — дело `worldGen` и `engine`, здесь только отрисовка.
  *
- * Пять слоёв, все аддитивные (ночь, неон, bloom), ни одной аллокации в кадре:
+ * ЗАЧЕМ ВСЁ ЭТО. Бонус, который не видно за 250 м, не бонус: на 250 км/ч
+ * (69 м/с) от решения «еду за звездой» до перестроения через две полосы
+ * проходит около двух секунд, то есть 140 м, и это уже без времени на то,
+ * чтобы её заметить. Поэтому здесь всё подчинено одному: звезда обязана
+ * читаться на горизонте.
  *
- *   1. ЗВЕЗДА. InstancedMesh шестилучевой искры — три скрещенных «октаэдра»
- *      разной длины. Силуэт колючий с любого ракурса, вращение вокруг Y от
- *      `pickup.spin` держит её живой. Цвет `COLORS.combo`, `toneMapped: false`,
- *      так что bloom честно раздувает её в блик.
+ * ПОЧЕМУ РАНЬШЕ НЕ ЧИТАЛАСЬ. Бонус висит на `PICKUPS.y` = 1.5 м, глаз водителя
+ * на `CAM.height` = 1.16 м, то есть всего на 34 см выше линии взгляда: на любой
+ * дистанции он садится ровно на горизонт, в самую светлую и шумную полосу кадра.
+ * Дальше добивала минификация: ореол размером 1.8 м на 200 м — это 8 экранных
+ * пикселей, а текстура ореола — 128². GPU берёт мип-уровень 4, где от блика
+ * остаётся средняя альфа по всему квадрату, и вместо звезды в кадре ровный
+ * тусклый прямоугольник (именно он и виден в q2-a.png). Лечится не яркостью, а
+ * УГЛОВЫМ РАЗМЕРОМ: ореол и шахта растут с дистанцией как `d^p`, экранный
+ * размер держится в районе 12…37 px, мип не уходит глубже второго, форма
+ * блика выживает. Остаток переусреднения добирается множителем `MIP_BOOST`.
  *
- *   2. КАНИСТРА. InstancedMesh капсулы в `COLORS.nitro`. Форма нарочно
- *      противоположна звезде — гладкая наклонённая «пилюля» против колючки:
- *      на 250 км/ч игрок различает их по силуэту и цвету раньше, чем успевает
- *      прочитать детали.
+ * ЗВЕЗДА ≠ КАНИСТРА. Их нельзя путать: одна стоит вылазки на встречку, вторая
+ * нет. Различия сложены так, чтобы работать по отдельности на любой дистанции:
+ *   - цвет: тёплое золото `COLORS.combo` против мятного `COLORS.nitro`;
+ *   - ореол: жёсткий четырёхлучевой блик (тот самый из кадра f_001) против
+ *     круглого свечения с кольцом;
+ *   - тело: колючая шестилучевая искра против гладкой наклонённой капсулы.
  *
- *   3. ОРЕОЛ. Аддитивный квад за телом, по одному InstancedMesh на вид бонуса:
- *      у звезды в текстуру вписан жёсткий четырёхлучевой крест (тот самый блик
- *      из кадра f_001), у канистры — мягкое круглое свечение. Без ореола тело
- *      читается ярким пятном пластика, а не источником света.
+ * СЛОИ, все аддитивные (ночь, неон, bloom), ни одной аллокации в кадре:
+ *   1. ТЕЛО — InstancedMesh искры и InstancedMesh капсулы, вершинный цвет
+ *      вместо освещения.
+ *   2. ОРЕОЛ — аддитивный квад за телом, свой на каждый вид бонуса.
+ *   3. ШАХТА СВЕТА — тонкий вертикальный квад от полотна до бонуса и чуть выше.
+ *      Ореол говорит «здесь бонус», шахта — «вот в этой полосе»: висящее у
+ *      горизонта пятно само по себе не показывает, куда рулить.
  *
- *   4. ШАХТА СВЕТА. Тонкий вертикальный квад от полотна до бонуса, низкая
- *      прозрачность. Самый дешёвый способ увидеть звезду за 600 м: сама искра
- *      там меньше пикселя, а столбик света — нет.
+ * ВСПЫШКА ПРИ ПОДБОРЕ живёт в отдельном кольце `POPS` инстансов, а не в слоте
+ * пула. Так и должно быть: `worldGen` освобождает слот собранного бонуса, как
+ * только тот на 6 м позади камеры (на максималке это 0.13 с, вдвое меньше
+ * `POP_TIME`), и слот тут же уходит под новый бонус. Вспышка, привязанная к
+ * слоту, обрывалась бы на середине. Кольцо хранит снимок (вид, полоса, фаза) и
+ * доигрывает свои 0.25 с само, придерживая картинку перед капотом.
  *
- * ВСПЫШКА ПРИ ПОДБОРЕ. `pickup.taken` не гасит слот мгновенно: прогресс
- * вспышки живёт в модульном `popT` (индекс = слот), тело раздувается и гаснет
- * за `POP_TIME`, после чего слот паркуется с нулевым масштабом. Слот
- * переиспользуется под новый бонус — это ловится по смене `pickup.id`, и
- * прогресс сбрасывается. Время вспышки берётся из `g.t`, а не из часов кадра,
- * поэтому пауза действительно останавливает её, как и вращение с покачиванием.
+ * ЦЕНА. Инстансы упакованы подряд, `mesh.count` режет хвост: пустые слоты не
+ * стоят ни вершины, ни байта загрузки, а в кадре обычно живых бонусов 3…6 из 24.
+ * Время берётся из `g.t`, а не из часов кадра, поэтому пауза честно
+ * останавливает и вращение, и вспышку.
  */
 
 import { useEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
-import type { Game } from "../types";
+import type { Game, Pickup } from "../types";
 import { COLORS, LIMITS, PICKUPS, QUALITY } from "../config";
 import { localX, localY, localZ } from "../road";
 import { clamp01, lerp, smoothstep } from "../num";
 
-/* ---------- размеры и темп ---------- */
+/* ---------- пул ---------- */
 
 const TAU = Math.PI * 2;
 
-/** Слотов ровно столько, сколько в пуле игры: слот = индекс в `g.pickups`. */
+/** Слотов ровно столько, сколько в пуле игры. */
 const POOL = LIMITS.pickups;
 
-/** Куда уезжает незанятый слот: нулевой масштаб плюс уход под мир. */
-const HIDE_Y = -1e4;
+/** Сколько вспышек подбора может гореть одновременно. Больше не бывает: они
+ *  живут по четверти секунды, а бонусы стоят в 22 м друг от друга. */
+const POPS = 4;
 
-/** Масштаб искры: короткий луч в метрах (длинный по Y — в полтора раза). */
+/** Ёмкость инстансных буферов тел и ореолов. */
+const CAP = POOL + POPS;
+
+/* ---------- размеры и темп ---------- */
+
+/** Искра: длина короткого луча, м (длинный по Y — в полтора раза). */
 const STAR_R = 0.46;
 /** Постоянный завал искры, чтобы лучи не совпадали с осями кадра. */
 const STAR_LEAN = 0.26;
@@ -75,50 +96,81 @@ const BOB_W = 1.9;
 const POP_TIME = 0.25;
 const POP_RISE = 1.15;
 /**
- * На какой дистанции догорает вспышка, м. Бонус подбирается в упор
- * (`PICKUPS.grabS` — 3.2 м) и мгновенно уезжает за камеру, так что вспышку
+ * На каком расстоянии перед камерой доигрывает вспышка, м. Бонус подбирается в
+ * упор (`PICKUPS.grabS` — 3.2 м) и мгновенно уезжает за камеру, так что её
  * приходится придержать перед капотом — иначе её просто никто не увидит.
  */
 const POP_HOLD = 7;
 
-/* ---------- дальность и слои ---------- */
+/* ---------- дальность ---------- */
 
 /** Дальность отрисовки по пресетам качества, м. */
 const FAR: readonly number[] = [420, 700, 900];
 /** Насколько метров позади камеры бонус ещё имеет смысл рисовать. */
-const NEAR_CUT = -4;
+const NEAR_CUT = -3;
 
-/** Базовый размер ореола, м, и предел его «раздувания» с дистанцией. */
-const HALO_SIZE = 1.8;
-const HALO_GROW = 240;
-const HALO_GROW_MAX = 3.4;
+/* ---------- угловая компенсация ---------- */
 
-/** Шахта света: ширина у камеры, м, её рост с дистанцией и запас сверху. */
-const SHAFT_W = 0.5;
-const SHAFT_GROW = 300;
-const SHAFT_GROW_MAX = 3;
-const SHAFT_TOP = 0.22;
+/**
+ * Тело: с `BODY_D0` метров растёт как корень из дистанции. Ближе — честный
+ * размер (именно он определяет вид бонуса, когда до него уже долетаешь),
+ * дальше — искра не сваливается в мерцающий субпиксель.
+ */
+const BODY_D0 = 55;
+const BODY_POW = 0.5;
+const BODY_MAX = 4;
 
-/** Яркости слоёв (уходят в instanceColor, поэтому могут быть больше единицы). */
+/** Ореол: базовый размер, м, и закон роста — почти постоянный угловой размер. */
+const HALO_SIZE = 1.7;
+const HALO_D0 = 26;
+const HALO_POW = 0.72;
+const HALO_MAX = 11;
+/**
+ * Ореол приподнят над телом на эту долю своего размера. Вблизи это 27 см и
+ * незаметно, вдали — несколько метров, и блик выходит из полосы горизонта,
+ * где его иначе съедает и туман, и фары встречных.
+ */
+const HALO_LIFT = 0.16;
+
+/**
+ * Шахта света: ширина у камеры, м, и её рост с дистанцией. Рост ограничен
+ * жёстко: шахта обязана оставаться столбиком выше, чем шире, иначе на 300 м
+ * она превращается в такое же пятно, как ореол, и перестаёт что-либо говорить
+ * про полосу.
+ */
+const SHAFT_W = 0.42;
+const SHAFT_D0 = 30;
+const SHAFT_POW = 0.75;
+const SHAFT_MAX = 3;
+/** На сколько метров шахта поднимается выше бонуса. */
+const SHAFT_UP = 1;
+/** Полная высота шахты, м: от полотна и с запасом над бонусом. */
+const SHAFT_H = PICKUPS.y + SHAFT_UP;
+/** Доля высоты, на которой сидит бонус: там у текстуры пик яркости. */
+const SHAFT_VP = PICKUPS.y / SHAFT_H;
+
+/* ---------- яркости ---------- */
+
+/** Уходят в instanceColor, поэтому спокойно бывают больше единицы. */
 const STAR_GAIN = 1.5;
 const CAN_GAIN = 1.35;
-const HALO_GAIN = 0.9;
-const SHAFT_GAIN = 0.22;
+const HALO_GAIN = 0.85;
+const SHAFT_GAIN = 0.55;
+/**
+ * Компенсация мип-усреднения: на дистанции квад читается уже не пиком
+ * текстуры, а её средним по мипу, и это в разы темнее. Разгоняем яркость
+ * ровно там, где начинается минификация, и не трогаем ближний план.
+ */
+const MIP_BOOST = 2.4;
+const MIP_D0 = 70;
+const MIP_D1 = 420;
 /** Во сколько раз ореол ярче обычного в первый кадр вспышки. */
-const POP_FLASH = 2.4;
+const POP_FLASH = 2.2;
 
 /** Порядок отрисовки: поверх дороги (до 5) и фонарей (до 8). */
 const ORDER_SHAFT = 9;
 const ORDER_HALO = 10;
 const ORDER_BODY = 11;
-
-/* ---------- состояние слотов ---------- */
-
-/** Прогресс вспышки 0…1 по слоту. Модульный, не React-состояние. */
-const popT = new Float32Array(POOL);
-/** Чей бонус лежал в слоте прошлый кадр: смена id — слот переиспользован. */
-const popId = new Float64Array(POOL);
-popId.fill(-1);
 
 /* ---------- скретч кадра ---------- */
 
@@ -132,9 +184,15 @@ const _eu = new THREE.Euler();
 const _col = new THREE.Color();
 const _mk = new THREE.Color();
 
-const _hide = new THREE.Matrix4();
-_hide.makeScale(0, 0, 0);
-_hide.setPosition(0, HIDE_Y, 0);
+/**
+ * Во сколько раз растянуть элемент на дистанции `d`, чтобы он не растаял.
+ * До `d0` — единица: ближний план должен иметь честный размер.
+ */
+function angGain(d: number, d0: number, p: number, max: number): number {
+  if (d <= d0) return 1;
+  const k = Math.pow(d / d0, p);
+  return k > max ? max : k;
+}
 
 /* ---------- текстуры ---------- */
 
@@ -144,14 +202,22 @@ function ctx2d(w: number, h: number): CanvasRenderingContext2D | null {
   const cv = document.createElement("canvas");
   cv.width = Math.max(4, w | 0);
   cv.height = Math.max(4, h | 0);
-  if (cv.width < 1 || cv.height < 1) return null;
   return cv.getContext("2d");
 }
 
+/** Полуширина луча блика в долях полукадра текстуры. */
+const RAY_W = 0.055;
+
 /**
- * Ореол: узкое ядро плюс широкая юбка, всё в белом — цвет придёт инстансом.
- * `cross` добавляет четырёхлучевой блик, каким в референсе горит звезда над
- * дорогой; для канистры он лишний, ей достаётся чистое круглое свечение.
+ * Ореол. Всё пишется белым — цвет придёт инстансом.
+ *
+ * `cross` даёт звезде четырёхлучевой блик (горизонтальный луч длиннее — так он
+ * выглядит в кадре f_001 референса), иначе рисуется круглое свечение с кольцом:
+ * на дистанции «✳» и «○» не спутать, даже когда обе размером в десяток
+ * пикселей и цвет уже сомнителен.
+ *
+ * Размер намеренно маленький: экранный размер ореола держится в пределах
+ * 12…37 px, глубже второго мип-уровня GPU не заходит, и 64² хватает с запасом.
  */
 function haloTex(size: number, cross: boolean): THREE.CanvasTexture | null {
   const ctx = ctx2d(size, size);
@@ -165,14 +231,20 @@ function haloTex(size: number, cross: boolean): THREE.CanvasTexture | null {
     for (let x = 0; x < w; x++) {
       const dx = (x - c) / c;
       const r2 = dx * dx + dy * dy;
-      const r = Math.sqrt(r2);
       // Срез у края квада: на аддитивном блендинге шов виден сразу.
-      const cut = smoothstep(1, 0.44, r);
-      let a = (Math.exp(-r2 * 17) + 0.5 * Math.exp(-r2 * 2.7)) * cut;
+      const cut = smoothstep(1, 0.42, Math.sqrt(r2));
+      let a = (0.95 * Math.exp(-r2 * 30) + 0.42 * Math.exp(-r2 * 3.4)) * cut;
       if (cross) {
-        // Горизонтальный луч длиннее вертикального — так блик выглядит в рил.
-        const rays = Math.exp(-dy * dy * 620) + 0.7 * Math.exp(-dx * dx * 620);
-        a += rays * 0.55 * smoothstep(1, 0.12, r);
+        // Знаменатели — квадраты длин лучей: горизонтальный достаёт почти до
+        // края квада, вертикальный короче. Длинные лучи нужны не для красоты:
+        // под минификацией первым исчезает то, что тоньше и короче.
+        const rayH = Math.exp(-(dy * dy) / (RAY_W * RAY_W)) * Math.exp(-(dx * dx) / 0.608);
+        const rayV = Math.exp(-(dx * dx) / (RAY_W * RAY_W)) * Math.exp(-(dy * dy) / 0.27);
+        a += (0.95 * rayH + 0.68 * rayV) * cut;
+      } else {
+        // Кольцо: круглое пятно без него на дистанции неотличимо от чего угодно.
+        const rd = (Math.sqrt(r2) - 0.52) / 0.1;
+        a += 0.42 * Math.exp(-rd * rd) * cut;
       }
       const i = (y * w + x) * 4;
       d[i] = 255;
@@ -186,9 +258,10 @@ function haloTex(size: number, cross: boolean): THREE.CanvasTexture | null {
 }
 
 /**
- * Шахта света: по горизонтали мягкий колокол, по вертикали яркость растёт
- * снизу вверх — свет как будто стекает с бонуса на полотно. Верхний край не
- * гасим: там его закрывает ореол.
+ * Шахта света: по горизонтали мягкий колокол, по вертикали свеча — тускло у
+ * асфальта, пик на высоте бонуса, сход в ноль над ним. Восемь текселей в
+ * ширину: на экране шахта никогда не шире пары десятков пикселей, а градиент
+ * от этого не страдает.
  */
 function shaftTex(w: number, h: number): THREE.CanvasTexture | null {
   const ctx = ctx2d(w, h);
@@ -200,9 +273,12 @@ function shaftTex(w: number, h: number): THREE.CanvasTexture | null {
   const c = (cw - 1) / 2;
   for (let y = 0; y < ch; y++) {
     // Текстура попадает на квад с flipY: верхняя строка — это v = 1, то есть
-    // верх шахты у самого бонуса, нижняя — контакт с асфальтом.
+    // верхушка шахты, нижняя — контакт с асфальтом.
     const v = 1 - y / (ch - 1);
-    const up = (0.16 + 0.84 * v * v) * smoothstep(0, 0.07, v);
+    const up =
+      (0.3 + 0.7 * smoothstep(0, SHAFT_VP, v)) *
+      (1 - smoothstep(SHAFT_VP, 1, v)) *
+      smoothstep(0, 0.05, v);
     for (let x = 0; x < cw; x++) {
       const dx = (x - c) / c;
       const a = up * Math.exp(-dx * dx * 6.5) * smoothstep(1, 0.62, Math.abs(dx));
@@ -304,10 +380,12 @@ function buildStarGeom(): THREE.BufferGeometry {
 
 /**
  * Канистра: капсула с запечённым в вершины поясом и подсветкой торцов —
- * силуэт остаётся гладким, но объём читается даже одним цветом.
+ * силуэт остаётся гладким, но объём читается даже одним цветом. Сегментов
+ * ровно столько, чтобы силуэт не гранился: на экране канистра почти никогда
+ * не крупнее пары сантиметров.
  */
 function buildCanGeom(): THREE.BufferGeometry {
-  const geo = new THREE.CapsuleGeometry(CAN_R, CAN_H, 4, 10);
+  const geo = new THREE.CapsuleGeometry(CAN_R, CAN_H, 3, 8);
   const attr = geo.getAttribute("position") as THREE.BufferAttribute;
   const cols = new Float32Array(attr.count * 3);
   const half = CAN_H * 0.5 + CAN_R;
@@ -331,18 +409,99 @@ function buildCanGeom(): THREE.BufferGeometry {
   return geo;
 }
 
+/* ---------- слой инстансов ---------- */
+
+/**
+ * Один InstancedMesh плюс всё, что нужно, чтобы писать в него подряд.
+ * Инстансы упаковываются с нуля, `count` режет хвост — незанятые слоты не
+ * попадают ни в отрисовку, ни в загрузку буфера.
+ */
+interface Layer {
+  mesh: THREE.InstancedMesh;
+  /** Сколько инстансов записано в этом кадре. */
+  n: number;
+  /** Диапазоны загрузки. По одному объекту на всю жизнь слоя: `addUpdateRange`
+   *  аллоцировал бы новый каждый кадр, а three чистит массив после загрузки. */
+  mRange: { start: number; count: number };
+  cRange: { start: number; count: number };
+}
+
+function makeLayer(mesh: THREE.InstancedMesh): Layer {
+  mesh.frustumCulled = false;
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  // Один вызов заводит буфер цветов целиком; нули безобидны — за `count`
+  // инстансы всё равно не рисуются, а рисуемым цвет пишется каждый кадр.
+  _col.setRGB(1, 1, 1);
+  mesh.setColorAt(0, _col);
+  mesh.count = 0;
+  mesh.visible = false;
+  return { mesh, n: 0, mRange: { start: 0, count: 0 }, cRange: { start: 0, count: 0 } };
+}
+
+function put(l: Layer, m: THREE.Matrix4, c: THREE.Color): void {
+  const i = l.n;
+  if (i >= l.mesh.instanceMatrix.count) return;
+  l.n = i + 1;
+  l.mesh.setMatrixAt(i, m);
+  l.mesh.setColorAt(i, c);
+}
+
+/** Закрыть слой: выставить `count` и загрузить ровно занятую часть буферов. */
+function seal(l: Layer): void {
+  const mesh = l.mesh;
+  const n = l.n;
+  mesh.count = n;
+  // Пустой слой прячем целиком: так он не попадает даже в список отрисовки,
+  // а это единственное, что у пустого InstancedMesh ещё стоит процессорного
+  // времени. Ни байта на GPU при этом тоже не уходит.
+  mesh.visible = n > 0;
+  if (n === 0) return;
+  const im = mesh.instanceMatrix;
+  // Диапазон нулевой длины в WebGL2 означает «до конца массива», поэтому
+  // границы выставляются только когда есть что грузить.
+  if (im.updateRanges.length === 0) im.updateRanges.push(l.mRange);
+  l.mRange.start = 0;
+  l.mRange.count = n * 16;
+  im.needsUpdate = true;
+  const ic = mesh.instanceColor;
+  if (ic) {
+    if (ic.updateRanges.length === 0) ic.updateRanges.push(l.cRange);
+    l.cRange.start = 0;
+    l.cRange.count = n * 3;
+    ic.needsUpdate = true;
+  }
+}
+
+/* ---------- вспышка подбора ---------- */
+
+/** Снимок собранного бонуса: живёт сам по себе, слот пула ему больше не нужен. */
+interface Pop {
+  live: boolean;
+  star: boolean;
+  s: number;
+  lane: number;
+  spin: number;
+  /** Прогресс 0…1. */
+  q: number;
+}
+
 /* ---------- ресурсы ---------- */
 
 interface World {
   group: THREE.Group;
-  stars: THREE.InstancedMesh;
-  cans: THREE.InstancedMesh;
-  haloStar: THREE.InstancedMesh | null;
-  haloCan: THREE.InstancedMesh | null;
-  shaft: THREE.InstancedMesh | null;
+  starBody: Layer;
+  canBody: Layer;
+  starHalo: Layer | null;
+  canHalo: Layer | null;
+  shaft: Layer | null;
   /** Линейные RGB палитры: звезда и канистра. */
   starRGB: Float64Array;
   nitroRGB: Float64Array;
+  /** Чей бонус лежал в слоте: смена id — слот переиспользован. */
+  seenId: Float64Array;
+  /** Вспышка по этому бонусу уже запущена. */
+  done: Uint8Array;
+  pops: Pop[];
   dispose: () => void;
 }
 
@@ -354,12 +513,13 @@ function hexInto(hex: string, out: Float64Array) {
 }
 
 /** Аддитивный квад с текстурой: ореолы и шахта отличаются только картой. */
-function quadMesh(
+function quadLayer(
   tex: THREE.Texture,
   geo: THREE.BufferGeometry,
   order: number,
+  cap: number,
   mats: THREE.Material[],
-): THREE.InstancedMesh {
+): Layer {
   const mat = new THREE.MeshBasicMaterial({
     map: tex,
     color: 0xffffff,
@@ -370,11 +530,9 @@ function quadMesh(
     fog: false,
   });
   mats.push(mat);
-  const mesh = new THREE.InstancedMesh(geo, mat, POOL);
-  mesh.frustumCulled = false;
+  const mesh = new THREE.InstancedMesh(geo, mat, cap);
   mesh.renderOrder = order;
-  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  return mesh;
+  return makeLayer(mesh);
 }
 
 function buildWorld(): World {
@@ -405,108 +563,181 @@ function buildWorld(): World {
   const canGeom = buildCanGeom();
   geoms.push(starGeom, canGeom);
 
-  const stars = new THREE.InstancedMesh(starGeom, bodyMat, POOL);
-  stars.frustumCulled = false;
-  stars.renderOrder = ORDER_BODY;
-  stars.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  const starsMesh = new THREE.InstancedMesh(starGeom, bodyMat, CAP);
+  starsMesh.renderOrder = ORDER_BODY;
+  const cansMesh = new THREE.InstancedMesh(canGeom, bodyMat, CAP);
+  cansMesh.renderOrder = ORDER_BODY;
 
-  const cans = new THREE.InstancedMesh(canGeom, bodyMat, POOL);
-  cans.frustumCulled = false;
-  cans.renderOrder = ORDER_BODY;
-  cans.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  const starBody = makeLayer(starsMesh);
+  const canBody = makeLayer(cansMesh);
 
   /* --- квады: ореолы и шахта --- */
 
   const quadGeom = new THREE.PlaneGeometry(1, 1);
   geoms.push(quadGeom);
 
-  const starTex = haloTex(128, true);
-  const canTex = haloTex(128, false);
-  const shaftTexture = shaftTex(32, 128);
+  const starTex = haloTex(64, true);
+  const canTex = haloTex(64, false);
+  const shaftTexture = shaftTex(8, 32);
 
-  let haloStar: THREE.InstancedMesh | null = null;
-  let haloCan: THREE.InstancedMesh | null = null;
-  let shaft: THREE.InstancedMesh | null = null;
+  let starHalo: Layer | null = null;
+  let canHalo: Layer | null = null;
+  let shaft: Layer | null = null;
 
   if (starTex) {
     texs.push(starTex);
-    haloStar = quadMesh(starTex, quadGeom, ORDER_HALO, mats);
+    starHalo = quadLayer(starTex, quadGeom, ORDER_HALO, CAP, mats);
   }
   if (canTex) {
     texs.push(canTex);
-    haloCan = quadMesh(canTex, quadGeom, ORDER_HALO, mats);
+    canHalo = quadLayer(canTex, quadGeom, ORDER_HALO, CAP, mats);
   }
   if (shaftTexture) {
     texs.push(shaftTexture);
-    shaft = quadMesh(shaftTexture, quadGeom, ORDER_SHAFT, mats);
+    // Шахта есть только у живых бонусов — вспышке она не нужна.
+    shaft = quadLayer(shaftTexture, quadGeom, ORDER_SHAFT, POOL, mats);
   }
 
   // Шахта уходит под ореолы и тела, порядок в группе повторяет renderOrder.
-  if (shaft) group.add(shaft);
-  if (haloStar) group.add(haloStar);
-  if (haloCan) group.add(haloCan);
-  group.add(stars, cans);
-
-  // Стартовое состояние: все слоты спрятаны, instanceColor уже существует —
-  // в кадре останется только переписать его и пометить грязным.
-  _col.setRGB(1, 1, 1);
-  for (let i = 0; i < POOL; i++) {
-    stars.setMatrixAt(i, _hide);
-    stars.setColorAt(i, _col);
-    cans.setMatrixAt(i, _hide);
-    cans.setColorAt(i, _col);
-    if (haloStar) {
-      haloStar.setMatrixAt(i, _hide);
-      haloStar.setColorAt(i, _col);
-    }
-    if (haloCan) {
-      haloCan.setMatrixAt(i, _hide);
-      haloCan.setColorAt(i, _col);
-    }
-    if (shaft) {
-      shaft.setMatrixAt(i, _hide);
-      shaft.setColorAt(i, _col);
-    }
-  }
+  if (shaft) group.add(shaft.mesh);
+  if (starHalo) group.add(starHalo.mesh);
+  if (canHalo) group.add(canHalo.mesh);
+  group.add(starBody.mesh, canBody.mesh);
 
   const starRGB = new Float64Array(3);
   const nitroRGB = new Float64Array(3);
   hexInto(COLORS.combo, starRGB);
   hexInto(COLORS.nitro, nitroRGB);
 
+  const seenId = new Float64Array(POOL);
+  seenId.fill(-1);
+  const done = new Uint8Array(POOL);
+  const pops: Pop[] = [];
+  for (let i = 0; i < POPS; i++) {
+    pops.push({ live: false, star: true, s: 0, lane: 0, spin: 0, q: 0 });
+  }
+
   const dispose = () => {
     for (const m of mats) m.dispose();
     for (const geo of geoms) geo.dispose();
     for (const t of texs) t.dispose();
-    stars.dispose();
-    cans.dispose();
-    haloStar?.dispose();
-    haloCan?.dispose();
-    shaft?.dispose();
+    starBody.mesh.dispose();
+    canBody.mesh.dispose();
+    starHalo?.mesh.dispose();
+    canHalo?.mesh.dispose();
+    shaft?.mesh.dispose();
   };
 
-  return { group, stars, cans, haloStar, haloCan, shaft, starRGB, nitroRGB, dispose };
+  return {
+    group,
+    starBody,
+    canBody,
+    starHalo,
+    canHalo,
+    shaft,
+    starRGB,
+    nitroRGB,
+    seenId,
+    done,
+    pops,
+    dispose,
+  };
 }
 
 /* ---------- покадровая раскладка ---------- */
 
-function hideSlot(w: World, i: number) {
-  w.stars.setMatrixAt(i, _hide);
-  w.cans.setMatrixAt(i, _hide);
-  if (w.haloStar) w.haloStar.setMatrixAt(i, _hide);
-  if (w.haloCan) w.haloCan.setMatrixAt(i, _hide);
-  if (w.shaft) w.shaft.setMatrixAt(i, _hide);
+/** Погасить все вспышки. */
+function killPops(w: World): void {
+  for (let i = 0; i < w.pops.length; i++) w.pops[i].live = false;
 }
 
-function flush(m: THREE.InstancedMesh | null) {
-  if (!m) return;
-  m.instanceMatrix.needsUpdate = true;
-  if (m.instanceColor) m.instanceColor.needsUpdate = true;
+/** Забыть всё, что помнилось про слоты и вспышки: новый заезд. */
+function resetSlots(w: World): void {
+  w.seenId.fill(-1);
+  w.done.fill(0);
+  killPops(w);
+}
+
+/** Занять кольцо под новую вспышку. Кольцо полное — гасим самую старую. */
+function startPop(w: World, p: Pickup): void {
+  const pops = w.pops;
+  let slot = -1;
+  let oldest = -1;
+  for (let i = 0; i < pops.length; i++) {
+    if (!pops[i].live) {
+      slot = i;
+      break;
+    }
+    if (pops[i].q > oldest) {
+      oldest = pops[i].q;
+      slot = i;
+    }
+  }
+  const pop = pops[slot];
+  pop.live = true;
+  pop.star = p.kind === "star";
+  pop.s = p.s;
+  pop.lane = p.lane;
+  pop.spin = p.spin;
+  pop.q = 0;
+}
+
+/**
+ * Тело и ореол в свои слои. Шахта рисуется отдельно: она бывает только у
+ * живых бонусов и требует другой позы.
+ */
+function emit(
+  w: World,
+  star: boolean,
+  px: number,
+  py: number,
+  pz: number,
+  ang: number,
+  bodyScale: number,
+  bodyB: number,
+  haloS: number,
+  haloB: number,
+): void {
+  const rgb = star ? w.starRGB : w.nitroRGB;
+
+  if (star) {
+    _eu.set(STAR_LEAN, ang, STAR_LEAN * 0.6, "XYZ");
+    const sc = STAR_R * bodyScale;
+    _scl.set(sc, sc, sc);
+  } else {
+    // Лёгкое кувыркание вокруг наклона: капсула перестаёт быть поплавком.
+    _eu.set(CAN_TILT * 0.4 * Math.sin(ang * 0.5), ang, CAN_TILT, "XYZ");
+    _scl.set(bodyScale, bodyScale, bodyScale);
+  }
+  _q.setFromEuler(_eu);
+  _pos.set(px, py, pz);
+  _m4.compose(_pos, _q, _scl);
+  _col.setRGB(rgb[0] * bodyB, rgb[1] * bodyB, rgb[2] * bodyB);
+  put(star ? w.starBody : w.canBody, _m4, _col);
+
+  /* Ореол: квад смотрит в +Z, камера отклоняется от оси на единицы градусов,
+     и честный билборд тут не окупается. */
+  const halo = star ? w.starHalo : w.canHalo;
+  if (halo && haloB > 0.002) {
+    _pos.set(px, py + haloS * HALO_LIFT, pz);
+    _scl.set(haloS, haloS, 1);
+    _m4.compose(_pos, _qi, _scl);
+    // Ядро ореола подбелено: чистый оттенок в центре выглядит краской, а не
+    // светом. Подмес маленький — цвет остаётся главным различием видов.
+    _col.setRGB(
+      lerp(rgb[0], 1, 0.2) * haloB,
+      lerp(rgb[1], 1, 0.2) * haloB,
+      lerp(rgb[2], 1, 0.2) * haloB,
+    );
+    put(halo, _m4, _col);
+  }
 }
 
 interface Anim {
   /** `g.t` прошлого кадра: вспышка живёт по игровому времени, не по кадрам. */
   lastT: number;
+  /** Номер заезда прошлого кадра: сменился — всё забыть. */
+  runs: number;
 }
 
 /* ---------- компонент ---------- */
@@ -519,7 +750,7 @@ export function Pickups({ g }: { g: Game }) {
   const w = holder.current;
 
   const animRef = useRef<Anim | null>(null);
-  if (animRef.current === null) animRef.current = { lastT: 0 };
+  if (animRef.current === null) animRef.current = { lastT: 0, runs: -1 };
 
   // Освобождение отложено на тик: StrictMode размонтирует компонент и тут же
   // монтирует обратно, и настоящий unmount от этой репетиции надо отличать.
@@ -555,153 +786,133 @@ export function Pickups({ g }: { g: Game }) {
     const camX = g.x;
     const t = g.t;
 
-    // Шаг игрового времени: на паузе он ноль, на рестарте `g.t` падает в ноль
-    // и разность уходит в минус — оба случая просто замораживают вспышку.
+    // Новый заезд: `startRun` поднимает `g.runs` и обнуляет `g.t`, а id бонусов
+    // начинают считаться заново — то есть старые id могут совпасть с новыми.
+    // Поэтому память о слотах и недогоревшие вспышки сбрасываются целиком.
+    if (anim.runs !== g.runs || t < anim.lastT) {
+      anim.runs = g.runs;
+      resetSlots(w);
+    }
+    // В меню и на экране конца `g.t` стоит: вспышка, начатая последним кадром
+    // заезда, иначе зависла бы перед капотом до самого рестарта.
+    if (g.phase === "over" || g.phase === "menu") killPops(w);
+
+    // Шаг игрового времени: на паузе он ноль — вспышка честно замирает.
     let dtG = t - anim.lastT;
     if (!(dtG > 0)) dtG = 0;
     else if (dtG > 0.2) dtG = 0.2;
     anim.lastT = t;
 
+    w.starBody.n = 0;
+    w.canBody.n = 0;
+    if (w.starHalo) w.starHalo.n = 0;
+    if (w.canHalo) w.canHalo.n = 0;
+    if (w.shaft) w.shaft.n = 0;
+
     const list = g.pickups;
     const n = list.length < POOL ? list.length : POOL;
 
-    for (let i = 0; i < POOL; i++) {
-      if (i >= n) {
-        hideSlot(w, i);
-        continue;
-      }
+    for (let i = 0; i < n; i++) {
       const p = list[i];
 
-      // Слот переиспользован под новый бонус — старая вспышка отменяется.
-      if (popId[i] !== p.id) {
-        popId[i] = p.id;
-        popT[i] = 0;
+      // Слот переиспользован под новый бонус — память о нём обнуляется.
+      if (w.seenId[i] !== p.id) {
+        w.seenId[i] = p.id;
+        w.done[i] = 0;
       }
 
-      const star = p.kind === "star";
-      const d = p.s - camS;
-      let sPos = p.s;
-      let y = PICKUPS.y;
-      let scale = 1;
-      let bodyB = 0;
-      let haloB = 0;
-      let haloS = HALO_SIZE;
-      let shaftB = 0;
-      let ang = p.spin + t * SPIN_W * (star ? 1 : 0.72) * (calm ? 0.5 : 1);
-
-      if (p.active && !p.taken) {
-        /* --- живой бонус --- */
-        popT[i] = 0;
-        if (d <= NEAR_CUT || d >= far) {
-          hideSlot(w, i);
-          continue;
+      if (p.taken) {
+        // Ровно один раз на бонус: дальше вспышка живёт в кольце, а слот
+        // свободен и может хоть в этом же кадре уйти под следующий бонус.
+        if (!w.done[i]) {
+          w.done[i] = 1;
+          startPop(w, p);
         }
-        const fade = smoothstep(far, far * 0.72, d) * smoothstep(NEAR_CUT, 4, d);
-        // Пульсация — это строб, в спокойном режиме её нет.
-        const puls = calm ? 1 : 1 + 0.16 * Math.sin(t * 3.4 + p.spin * 2.1);
-        y = PICKUPS.y + (calm ? 0.05 : BOB_AMP) * Math.sin(t * BOB_W + p.spin);
-        bodyB = fade * puls * (star ? STAR_GAIN : CAN_GAIN) * gain;
-        haloB = fade * puls * HALO_GAIN * gain;
-        haloS =
-          (star ? HALO_SIZE : HALO_SIZE * 0.82) *
-          (d > 0 ? Math.min(1 + d / HALO_GROW, HALO_GROW_MAX) : 1);
-        // Шахта — подсказка для дальнего плана: вблизи она только мешает.
-        shaftB = fade * SHAFT_GAIN * gain * smoothstep(far * 0.9, 26, d);
-      } else if (p.taken && popT[i] < 1) {
-        /* --- вспышка подбора --- */
-        let q = popT[i] + dtG / POP_TIME;
-        if (q > 1) q = 1;
-        popT[i] = q;
-        if (q >= 1) {
-          hideSlot(w, i);
-          continue;
-        }
-        const k = 1 - q;
-        const k2 = k * k;
-        // Бонус уже за камерой: придерживаем вспышку перед капотом.
-        sPos = p.s < camS + POP_HOLD ? camS + POP_HOLD : p.s;
-        y = PICKUPS.y + POP_RISE * q;
-        scale = 1 + 2.1 * q;
-        ang += q * 5.5;
-        bodyB = k2 * 1.7 * (star ? STAR_GAIN : CAN_GAIN) * gain;
-        haloB = k2 * POP_FLASH * gain;
-        haloS = HALO_SIZE * (1 + 2.4 * q);
-      } else {
-        hideSlot(w, i);
         continue;
       }
+      if (!p.active) continue;
 
-      const lane = p.lane;
-      const px = localX(sPos, lane, camS, camX);
-      const py = localY(sPos, y, camS);
-      const pz = localZ(sPos, camS);
-      const rgb = star ? w.starRGB : w.nitroRGB;
+      const d = p.s - camS;
+      if (d <= NEAR_CUT || d >= far) continue;
 
-      /* --- тело --- */
-      if (star) {
-        _eu.set(STAR_LEAN, ang, STAR_LEAN * 0.6, "XYZ");
-        const sc = STAR_R * scale;
-        _scl.set(sc, sc, sc);
-      } else {
-        // Лёгкое кувыркание вокруг наклона: капсула перестаёт быть поплавком.
-        _eu.set(CAN_TILT * 0.4 * Math.sin(ang * 0.5), ang, CAN_TILT, "XYZ");
-        _scl.set(scale, scale, scale);
-      }
-      _q.setFromEuler(_eu);
-      _pos.set(px, py, pz);
-      _m4.compose(_pos, _q, _scl);
-      _col.setRGB(rgb[0] * bodyB, rgb[1] * bodyB, rgb[2] * bodyB);
-      if (star) {
-        w.stars.setMatrixAt(i, _m4);
-        w.stars.setColorAt(i, _col);
-        w.cans.setMatrixAt(i, _hide);
-      } else {
-        w.cans.setMatrixAt(i, _m4);
-        w.cans.setColorAt(i, _col);
-        w.stars.setMatrixAt(i, _hide);
-      }
+      const star = p.kind === "star";
+      const fade = smoothstep(far, far * 0.72, d) * smoothstep(NEAR_CUT, 2, d);
+      // Пульсация — это строб, в спокойном режиме её нет.
+      const puls = calm ? 1 : 1 + 0.16 * Math.sin(t * 3.4 + p.spin * 2.1);
+      const mip = 1 + (MIP_BOOST - 1) * smoothstep(MIP_D0, MIP_D1, d);
 
-      /* --- ореол: квад смотрит в +Z, камера отклоняется от оси на единицы
-             градусов, и честный билборд тут не окупается --- */
-      const halo = star ? w.haloStar : w.haloCan;
-      const idle = star ? w.haloCan : w.haloStar;
-      if (idle) idle.setMatrixAt(i, _hide);
-      if (halo) {
-        _scl.set(haloS, haloS, 1);
-        _m4.compose(_pos, _qi, _scl);
-        halo.setMatrixAt(i, _m4);
-        // Ядро ореола подбелено: чистый оттенок в центре выглядит краской, а
-        // не светом.
-        _col.setRGB(
-          lerp(rgb[0], 1, 0.22) * haloB,
-          lerp(rgb[1], 1, 0.22) * haloB,
-          lerp(rgb[2], 1, 0.22) * haloB,
-        );
-        halo.setColorAt(i, _col);
-      }
+      const y = PICKUPS.y + (calm ? 0.05 : BOB_AMP) * Math.sin(t * BOB_W + p.spin);
+      const px = localX(p.s, p.lane, camS, camX);
+      const pz = localZ(p.s, camS);
 
-      /* --- шахта света --- */
+      emit(
+        w,
+        star,
+        px,
+        localY(p.s, y, camS),
+        pz,
+        p.spin + t * SPIN_W * (star ? 1 : 0.72) * (calm ? 0.5 : 1),
+        angGain(d, BODY_D0, BODY_POW, BODY_MAX),
+        fade * puls * (star ? STAR_GAIN : CAN_GAIN) * gain,
+        (star ? HALO_SIZE : HALO_SIZE * 0.86) * angGain(d, HALO_D0, HALO_POW, HALO_MAX),
+        fade * puls * HALO_GAIN * gain * mip,
+      );
+
+      /* --- шахта света: показывает полосу, в которой висит бонус --- */
       if (w.shaft) {
-        if (shaftB <= 0.001) {
-          w.shaft.setMatrixAt(i, _hide);
-        } else {
-          const wide = SHAFT_W * (d > 0 ? Math.min(1 + d / SHAFT_GROW, SHAFT_GROW_MAX) : 1);
-          const tall = y + SHAFT_TOP;
-          _pos.set(px, localY(sPos, tall * 0.5, camS), pz);
-          _scl.set(wide, tall, 1);
+        // Окно, в котором она нужна: дальше 320 м игрок читает только ореол и
+        // решает «ехать или нет», ближе 26 м бонус и так занимает пол-экрана.
+        // Между ними идёт перестроение — вот там и надо показать полосу.
+        const b = SHAFT_GAIN * gain * smoothstep(26, 55, d) * smoothstep(320, 200, d);
+        if (b > 0.002) {
+          const wide = SHAFT_W * angGain(d, SHAFT_D0, SHAFT_POW, SHAFT_MAX);
+          _pos.set(px, localY(p.s, SHAFT_H * 0.5, camS), pz);
+          _scl.set(wide, SHAFT_H, 1);
           _m4.compose(_pos, _qi, _scl);
-          w.shaft.setMatrixAt(i, _m4);
-          _col.setRGB(rgb[0] * shaftB, rgb[1] * shaftB, rgb[2] * shaftB);
-          w.shaft.setColorAt(i, _col);
+          const rgb = star ? w.starRGB : w.nitroRGB;
+          _col.setRGB(rgb[0] * b, rgb[1] * b, rgb[2] * b);
+          put(w.shaft, _m4, _col);
         }
       }
     }
 
-    flush(w.stars);
-    flush(w.cans);
-    flush(w.haloStar);
-    flush(w.haloCan);
-    flush(w.shaft);
+    /* --- вспышки подбора --- */
+    for (let i = 0; i < w.pops.length; i++) {
+      const pop = w.pops[i];
+      if (!pop.live) continue;
+      const q = pop.q + dtG / POP_TIME;
+      if (q >= 1) {
+        pop.live = false;
+        continue;
+      }
+      pop.q = q;
+
+      const k = 1 - q;
+      const k2 = k * k;
+      // Бонус уже за камерой: придерживаем вспышку перед капотом.
+      const sPos = pop.s < camS + POP_HOLD ? camS + POP_HOLD : pop.s;
+      // Дорожка звёзд идёт с шагом 22 м — на максималке это вспышка каждые
+      // 0.3 с. В спокойном режиме такая очередь читается как строб, поэтому
+      // там она тише и почти не раздувается.
+      emit(
+        w,
+        pop.star,
+        localX(sPos, pop.lane, camS, camX),
+        localY(sPos, PICKUPS.y + POP_RISE * q, camS),
+        localZ(sPos, camS),
+        pop.spin + t * SPIN_W + q * 5.5,
+        1 + (calm ? 0.7 : 1.7) * q,
+        k2 * 1.7 * (pop.star ? STAR_GAIN : CAN_GAIN) * gain,
+        HALO_SIZE * (1 + (calm ? 0.9 : 2.2) * q),
+        k2 * POP_FLASH * gain * (calm ? 0.45 : 1),
+      );
+    }
+
+    seal(w.starBody);
+    seal(w.canBody);
+    if (w.starHalo) seal(w.starHalo);
+    if (w.canHalo) seal(w.canHalo);
+    if (w.shaft) seal(w.shaft);
   });
 
   return <primitive object={w.group} dispose={null} />;

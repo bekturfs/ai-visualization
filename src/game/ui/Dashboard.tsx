@@ -117,8 +117,19 @@ function buildNums(vals: readonly number[], top: number, r: number): Numeral[] {
   });
 }
 
-const SPEED_TICKS = buildTicks(30, 5);
-const TACH_TICKS = buildTicks(14, 2);
+/**
+ * Те же риски, но разложенные на короткие и длинные. Длинные светятся, и
+ * светятся они ОДНОЙ группой на один SVG-фильтр вместо пятнадцати отдельных:
+ * риски не перекрываются, результат тот же, а поверхностей под размытие в
+ * восемь раз меньше.
+ */
+function splitTicks(steps: number, majorEvery: number): [Tick[], Tick[]] {
+  const all = buildTicks(steps, majorEvery);
+  return [all.filter((t) => !t.major), all.filter((t) => t.major)];
+}
+
+const [SPEED_MINOR, SPEED_MAJOR] = splitTicks(30, 5);
+const [TACH_MINOR, TACH_MAJOR] = splitTicks(14, 2);
 const SPEED_NUMS = buildNums([0, 50, 100, 150, 200, 250, 300], SPEED_TOP, 56);
 const TACH_NUMS = buildNums([0, 1, 2, 3, 4, 5, 6, 7], 7, 56);
 const REDLINE_ARC = arcPath(DIAL_R - 6, START + REDLINE * SWEEP, START + SWEEP);
@@ -175,18 +186,27 @@ const CONSOLE_SEGS = buildSegs();
 
 /**
  * Рука на ободе. Локальные координаты: +x — наружу от ступицы, +y — вниз.
- * Кисть стоит на осевой линии обода, пальцы перекинуты внутрь, предплечье
- * уходит вниз-наружу за нижнюю кромку кадра — к плечу водителя, а не вбок.
+ *
+ * В референсе руки почти не читаются: тёмный силуэт, вцепившийся в обод,
+ * холодная кромка сверху от лобового стекла и слабый тёплый отсвет приборки
+ * снизу. Поэтому здесь одна тёмная масса-хват, а пальцы обозначены не
+ * светлыми формами, а тёмными бороздами между ними — светлая кисть с
+ * прорисованными пальцами на этом масштабе читается как варежка.
  */
-const PALM_D =
-  "M 0 -27 C 16 -37 40 -33 50 -20 C 60 -6 60 15 50 28 " +
-  "C 38 40 14 40 0 31 C -12 24 -14 -20 0 -27 Z";
-/** Верхняя кромка кисти — по ней идёт синий контровой свет с лобового. */
-const PALM_RIM_D = "M 0 -26 C 16 -36 40 -32 50 -19";
-/** Большой палец, зацепленный за верх обода. */
-const THUMB_D = "M 16 -26 C 0 -38 -18 -38 -26 -30";
-/** Пальцы, перекинутые через обод внутрь: кончики выходят за его кромку. */
-const FINGERS = [-17, -6, 5, 16] as const;
+const GRIP_D =
+  "M 46 -18 C 40 -29 14 -33 -8 -29 C -28 -26 -43 -20 -43 -9 " +
+  "C -43 6 -32 21 -14 25 C 6 30 34 30 47 21 C 55 15 53 -9 46 -18 Z";
+/** Верхняя кромка хвата — по ней идёт синий контровой свет с лобового. */
+const GRIP_RIM_D = "M 45 -19 C 39 -30 14 -34 -8 -30 C -24 -27 -37 -22 -42 -13";
+/** Нижняя кромка — слабый тёплый отсвет от красной приборки. */
+const GRIP_BOUNCE_D = "M -13 24 C 6 29 33 29 46 20";
+/** Большой палец, зацепленный за верх обода: выступает над костяшками. */
+const THUMB_D = "M 18 -24 C 2 -34 -16 -34 -25 -27";
+/** Борозды между пальцами: идут вдоль пальцев, к ступице. */
+const FINGERS = [-16, -4, 8] as const;
+/** Начало и конец борозды по x — целиком внутри силуэта хвата. */
+const GROOVE_X0 = 2;
+const GROOVE_X1 = -36;
 /** Предплечье. */
 const ARM_D = "M 36 4 L 96 118 L 46 142 L -10 34 Z";
 /** Ремешок часов поперёк предплечья. */
@@ -206,7 +226,12 @@ const WRAP: CSSProperties = {
   left: 0,
   right: 0,
   bottom: 0,
-  height: "min(46vh, 62vw)",
+  // Нижняя граница здесь не вкусовая. `slice` масштабирует SVG по ширине, так
+  // что видно ровно нижние `высота_контейнера / (ширина_экрана / 1000)` единиц
+  // viewBox; циферблаты начинаются на y ≈ 186, и всё, что ниже ~42vh на 16:9,
+  // срезает им верх вместе со строкой DIST. 46vh при этом съедало почти всё
+  // место под горизонтом — дороги оставалось тридцать пикселей.
+  height: "min(42vh, 62vw)",
   pointerEvents: "none",
 };
 
@@ -232,25 +257,61 @@ function setText(node: SVGTextElement | null, v: string): void {
   if (node && node.textContent !== v) node.textContent = v;
 }
 
+/**
+ * «Погашенные сегменты» настоящего LED-индикатора. Подложка обязана быть РОВНО
+ * той же длины, что и значение, иначе лишние восьмёрки слева читаются как часть
+ * числа («888811» вместо «11»). Оба слоя — один моноширинный шрифт, один
+ * кегль, один `text-anchor="end"`, поэтому каждая живая цифра садится точно на
+ * свою восьмёрку. Строки заготовлены, чтобы не звать `repeat` в цикле.
+ */
+const GHOSTS = ["", "8", "88", "888", "8888", "88888", "888888", "8888888", "88888888"];
+
+function ghostFor(v: string): string {
+  return GHOSTS[v.length] ?? "8".repeat(v.length);
+}
+
+/** Шаг квантования угла: 1/20 градуса. */
+const DEG_Q = 20;
+/** Шаг квантования прозрачности: 1/1000. */
+const OP_Q = 1000;
+
 export function Dashboard({ g }: { g: Game }) {
   /* Пресет читаем один раз на монтировании: разметка статична, фильтры в ней —
      тоже. Смена качества на лету потребует перемонтировать оверлей. */
   const glow = QUALITY[g.quality].bloom ? "url(#srd-glow)" : undefined;
+  /* Тот же ореол, но с узкой рамкой фильтра — для широких групп, где −70%/240%
+     раздували бы поверхность размытия вчетверо без единого лишнего пикселя. */
+  const glowW = QUALITY[g.quality].bloom ? "url(#srd-glow-w)" : undefined;
 
   const wheelRef = useRef<SVGGElement>(null);
   const speedNeedle = useRef<SVGGElement>(null);
   const tachNeedle = useRef<SVGGElement>(null);
   const distText = useRef<SVGTextElement>(null);
+  const distGhost = useRef<SVGTextElement>(null);
   const scoreText = useRef<SVGTextElement>(null);
+  const scoreGhost = useRef<SVGTextElement>(null);
   const bestText = useRef<SVGTextElement>(null);
   const kmhText = useRef<SVGTextElement>(null);
   const gearText = useRef<SVGTextElement>(null);
   const nitroWash = useRef<SVGPathElement>(null);
   const clusterGlow = useRef<SVGGElement>(null);
-  const redline = useRef<SVGPathElement>(null);
+  const redline = useRef<SVGGElement>(null);
 
-  /* Сглаженные для графики величины: живут в ref, React про них не знает. */
-  const anim = useRef({ rpm: RPM_IDLE, kmh: 0, wash: 0, last: 0, textAt: 0 });
+  /* Сглаженные для графики величины плюс кэш последнего ЗАПИСАННОГО в DOM
+     значения (в целых «корзинах»). Всё в ref, React про них не знает. */
+  const anim = useRef({
+    rpm: RPM_IDLE,
+    kmh: 0,
+    wash: 0,
+    last: 0,
+    textAt: 0,
+    wSpeed: NaN,
+    wTach: NaN,
+    wWheel: NaN,
+    wWash: NaN,
+    wCluster: NaN,
+    wRed: NaN,
+  });
 
   useEffect(() => {
     const a = anim.current;
@@ -270,40 +331,69 @@ export function Dashboard({ g }: { g: Game }) {
       const inGear = clamp01(frac * GEARS - gear);
       a.rpm = damp(a.rpm, RPM_IDLE + inGear * (RPM_TOP - RPM_IDLE), 9, dt);
       a.kmh = damp(a.kmh, g.speed * 3.6, 11, dt);
+      /* Нитро: холодная заливка салона и приборка светит сильнее. */
+      a.wash = damp(a.wash, g.nitroActive ? 1 : 0, 6, dt);
 
       /* Дрожь стрелки тахометра от вибрации мотора. */
       const jitter = g.reducedMotion ? 0 : Math.sin(now * 0.05) * 0.7 * (a.rpm / RPM_TOP);
 
+      /* Каждый setAttribute инвалидирует кусок SVG вместе со всеми фильтрами,
+         которые его перекрывают. Поэтому значение сначала квантуется в целую
+         «корзину», и в DOM уходит, только если корзина сменилась: на ровном
+         газу и на прямой цикл не трогает DOM вообще. */
+      const sDeg = Math.round((START + clamp01(a.kmh / SPEED_TOP) * SWEEP) * DEG_Q);
       const sn = speedNeedle.current;
-      if (sn) {
-        const deg = START + clamp01(a.kmh / SPEED_TOP) * SWEEP;
-        sn.setAttribute("transform", `rotate(${deg.toFixed(2)})`);
+      if (sn && sDeg !== a.wSpeed) {
+        a.wSpeed = sDeg;
+        sn.setAttribute("transform", `rotate(${(sDeg / DEG_Q).toFixed(2)})`);
       }
-      const tn = tachNeedle.current;
-      if (tn) {
-        const deg = START + clamp01(a.rpm / RPM_TOP) * SWEEP + jitter;
-        tn.setAttribute("transform", `rotate(${deg.toFixed(2)})`);
-      }
-      const wr = wheelRef.current;
-      if (wr) wr.setAttribute("transform", `rotate(${(g.steer * WHEEL_STEER).toFixed(2)})`);
 
-      /* Нитро: холодная заливка салона и приборка светит сильнее. */
-      a.wash = damp(a.wash, g.nitroActive ? 1 : 0, 6, dt);
+      const tDeg = Math.round((START + clamp01(a.rpm / RPM_TOP) * SWEEP + jitter) * DEG_Q);
+      const tn = tachNeedle.current;
+      if (tn && tDeg !== a.wTach) {
+        a.wTach = tDeg;
+        tn.setAttribute("transform", `rotate(${(tDeg / DEG_Q).toFixed(2)})`);
+      }
+
+      const wDeg = Math.round(g.steer * WHEEL_STEER * DEG_Q);
+      const wr = wheelRef.current;
+      if (wr && wDeg !== a.wWheel) {
+        a.wWheel = wDeg;
+        wr.setAttribute("transform", `rotate(${(wDeg / DEG_Q).toFixed(2)})`);
+      }
+
+      const washOp = Math.round(a.wash * 0.055 * OP_Q);
       const nw = nitroWash.current;
-      if (nw) nw.setAttribute("opacity", (a.wash * 0.055).toFixed(3));
+      if (nw && washOp !== a.wWash) {
+        a.wWash = washOp;
+        nw.setAttribute("opacity", (washOp / OP_Q).toFixed(3));
+      }
+
+      const clusterOp = Math.round((0.4 + a.wash * 0.5) * OP_Q);
       const cg = clusterGlow.current;
-      if (cg) cg.setAttribute("opacity", (0.4 + a.wash * 0.5).toFixed(3));
+      if (cg && clusterOp !== a.wCluster) {
+        a.wCluster = clusterOp;
+        cg.setAttribute("opacity", (clusterOp / OP_Q).toFixed(3));
+      }
+
+      /* Прозрачность красной зоны живёт на ОБЁРТКЕ, а не на светящемся пути:
+         так размытие под ним не пересчитывается на каждое изменение. */
+      const redOp = Math.round((0.28 + inv(REDLINE, 1, a.rpm / RPM_TOP) * 0.72) * OP_Q);
       const rl = redline.current;
-      if (rl) {
-        const hot = inv(REDLINE, 1, a.rpm / RPM_TOP);
-        rl.setAttribute("opacity", (0.28 + hot * 0.72).toFixed(3));
+      if (rl && redOp !== a.wRed) {
+        a.wRed = redOp;
+        rl.setAttribute("opacity", (redOp / OP_Q).toFixed(3));
       }
 
       /* Цифры — десять раз в секунду: мельтешение шестьюдесятью нечитаемо. */
       if (now - a.textAt >= 100) {
         a.textAt = now;
-        setText(distText.current, String(Math.max(0, Math.round(g.s))));
-        setText(scoreText.current, String(Math.round(g.score)));
+        const dist = String(Math.max(0, Math.round(g.s)));
+        const score = String(Math.round(g.score));
+        setText(distGhost.current, ghostFor(dist));
+        setText(distText.current, dist);
+        setText(scoreGhost.current, ghostFor(score));
+        setText(scoreText.current, score);
         setText(bestText.current, String(Math.round(Math.max(g.best, g.score))));
         setText(kmhText.current, String(Math.round(a.kmh)));
         setText(gearText.current, g.speed < 1.5 ? "N" : String(gear + 1));
@@ -324,6 +414,25 @@ export function Dashboard({ g }: { g: Game }) {
             y="-70%"
             width="240%"
             height="240%"
+            colorInterpolationFilters="sRGB"
+          >
+            <feGaussianBlur stdDeviation="2.4" result="b" />
+            <feMerge>
+              <feMergeNode in="b" />
+              <feMergeNode in="b" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+
+          {/* Тот же ореол для крупных групп: рамка фильтра задаётся в долях
+              bbox, и для циферблата 160×160 хватает 12% (≈19 единиц при
+              stdDeviation 2.4). Поверхность вчетверо меньше, чем у −70%/240%. */}
+          <filter
+            id="srd-glow-w"
+            x="-12%"
+            y="-12%"
+            width="124%"
+            height="124%"
             colorInterpolationFilters="sRGB"
           >
             <feGaussianBlur stdDeviation="2.4" result="b" />
@@ -366,11 +475,20 @@ export function Dashboard({ g }: { g: Game }) {
             <stop offset="1" stopColor="#070a11" />
           </linearGradient>
 
-          {/* Кожа: приглушённая, подсвеченная сине-голубым с лобового стекла. */}
-          <linearGradient id="srd-skin" x1="0" y1="0" x2="0.25" y2="1">
-            <stop offset="0" stopColor="#8ba1b3" />
-            <stop offset="0.4" stopColor="#586878" />
-            <stop offset="1" stopColor="#1e2833" />
+          {/* Кисть: почти силуэт. Сверху холодный отблеск лобового, к низу уходит
+              в чёрное с еле заметным тёплым подмесом от приборки. Ничего
+              «телесного» — в кадре рука не должна спорить с дорогой. */}
+          <linearGradient id="srd-skin" x1="0" y1="0" x2="0.18" y2="1">
+            <stop offset="0" stopColor="#2b3947" />
+            <stop offset="0.38" stopColor="#151d27" />
+            <stop offset="0.78" stopColor="#0a0d14" />
+            <stop offset="1" stopColor="#150c0e" />
+          </linearGradient>
+
+          {/* Рукав: ещё темнее кисти, он дальше от стекла. */}
+          <linearGradient id="srd-sleeve" x1="0" y1="0" x2="0.3" y2="1">
+            <stop offset="0" stopColor="#141c26" />
+            <stop offset="1" stopColor="#04060c" />
           </linearGradient>
 
           <linearGradient id="srd-mirror" x1="0" y1="0" x2="0" y2="1">
@@ -494,37 +612,37 @@ export function Dashboard({ g }: { g: Game }) {
           <g transform={`translate(${TACH_CX} ${DIAL_CY})`}>
             <circle r={DIAL_R + 7} fill="#01030a" stroke={COLORS.cabinEdge} strokeWidth={2} />
             <circle r={DIAL_R} fill="url(#srd-face)" />
-            <path
-              d={SCALE_ARC}
-              fill="none"
-              stroke={COLORS.gauge}
-              strokeWidth={2}
-              opacity={0.45}
-              filter={glow}
-            />
-            <path
-              ref={redline}
-              d={REDLINE_ARC}
-              fill="none"
-              stroke={COLORS.gauge}
-              strokeWidth={5}
-              strokeLinecap="round"
-              opacity={0.3}
-              filter={glow}
-            />
-            {TACH_TICKS.map((t, i) => (
-              <line
-                key={i}
-                x1={t.x1}
-                y1={t.y1}
-                x2={t.x2}
-                y2={t.y2}
-                stroke={t.major ? COLORS.gauge : COLORS.gaugeDim}
-                strokeWidth={t.major ? 2.6 : 1.4}
-                opacity={t.major ? 0.8 : 1}
-                filter={t.major ? glow : undefined}
+            {/* Короткие риски не светятся — фильтр им не нужен. */}
+            <g stroke={COLORS.gaugeDim} strokeWidth={1.4}>
+              {TACH_MINOR.map((t, i) => (
+                <line key={i} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} />
+              ))}
+            </g>
+            {/* Шкала и длинные риски — один фильтр на всю статику циферблата. */}
+            <g filter={glowW}>
+              <path
+                d={SCALE_ARC}
+                fill="none"
+                stroke={COLORS.gauge}
+                strokeWidth={2}
+                opacity={0.45}
               />
-            ))}
+              <g stroke={COLORS.gauge} strokeWidth={2.6} opacity={0.8}>
+                {TACH_MAJOR.map((t, i) => (
+                  <line key={i} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} />
+                ))}
+              </g>
+            </g>
+            <g ref={redline} opacity={0.3}>
+              <path
+                d={REDLINE_ARC}
+                fill="none"
+                stroke={COLORS.gauge}
+                strokeWidth={5}
+                strokeLinecap="round"
+                filter={glowW}
+              />
+            </g>
             {TACH_NUMS.map((n) => (
               <text
                 key={n.label}
@@ -591,27 +709,25 @@ export function Dashboard({ g }: { g: Game }) {
           <g transform={`translate(${SPEED_CX} ${DIAL_CY})`}>
             <circle r={DIAL_R + 7} fill="#01030a" stroke={COLORS.cabinEdge} strokeWidth={2} />
             <circle r={DIAL_R} fill="url(#srd-face)" />
-            <path
-              d={SCALE_ARC}
-              fill="none"
-              stroke={COLORS.gauge}
-              strokeWidth={2}
-              opacity={0.45}
-              filter={glow}
-            />
-            {SPEED_TICKS.map((t, i) => (
-              <line
-                key={i}
-                x1={t.x1}
-                y1={t.y1}
-                x2={t.x2}
-                y2={t.y2}
-                stroke={t.major ? COLORS.gauge : COLORS.gaugeDim}
-                strokeWidth={t.major ? 2.6 : 1.4}
-                opacity={t.major ? 0.8 : 1}
-                filter={t.major ? glow : undefined}
+            <g stroke={COLORS.gaugeDim} strokeWidth={1.4}>
+              {SPEED_MINOR.map((t, i) => (
+                <line key={i} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} />
+              ))}
+            </g>
+            <g filter={glowW}>
+              <path
+                d={SCALE_ARC}
+                fill="none"
+                stroke={COLORS.gauge}
+                strokeWidth={2}
+                opacity={0.45}
               />
-            ))}
+              <g stroke={COLORS.gauge} strokeWidth={2.6} opacity={0.8}>
+                {SPEED_MAJOR.map((t, i) => (
+                  <line key={i} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} />
+                ))}
+              </g>
+            </g>
             {SPEED_NUMS.map((n) => (
               <text
                 key={n.label}
@@ -679,6 +795,7 @@ export function Dashboard({ g }: { g: Game }) {
               DIST
             </text>
             <text
+              ref={distGhost}
               x={594}
               y={234}
               fill={COLORS.gaugeDim}
@@ -686,9 +803,9 @@ export function Dashboard({ g }: { g: Game }) {
               fontSize={23}
               fontWeight={700}
               textAnchor="end"
-              opacity={0.16}
+              opacity={0.15}
             >
-              888888
+              8
             </text>
             <text
               ref={distText}
@@ -708,6 +825,7 @@ export function Dashboard({ g }: { g: Game }) {
               SCORE
             </text>
             <text
+              ref={scoreGhost}
               x={594}
               y={262}
               fill={COLORS.gaugeDim}
@@ -715,9 +833,9 @@ export function Dashboard({ g }: { g: Game }) {
               fontSize={19}
               fontWeight={700}
               textAnchor="end"
-              opacity={0.16}
+              opacity={0.15}
             >
-              8888888
+              8
             </text>
             <text
               ref={scoreText}
@@ -951,44 +1069,50 @@ export function Dashboard({ g }: { g: Game }) {
                   `rotate(${HAND_TILT})`
                 }
               >
-                <path d={ARM_D} fill="url(#srd-skin)" />
-                <path d={WATCH_D} fill="#0c131e" />
-                <circle cx={64} cy={61} r={6} fill="#1b2735" />
-                <circle cx={64} cy={61} r={2.4} fill={COLORS.neon} opacity={0.55} />
-                {FINGERS.map((fy) => (
-                  <line
-                    key={fy}
-                    x1={6}
-                    y1={fy}
-                    x2={-38}
-                    y2={fy + 2}
-                    stroke="#5d6c7c"
-                    strokeWidth={11}
-                    strokeLinecap="round"
-                  />
-                ))}
+                <path d={ARM_D} fill="url(#srd-sleeve)" />
+                <path d={WATCH_D} fill="#080d15" />
+                <circle cx={64} cy={61} r={6} fill="#101823" />
+                <circle cx={64} cy={61} r={2.4} fill={COLORS.neon} opacity={0.5} />
+                {/* Большой палец уходит под хват — виден только его верх. */}
                 <path
                   d={THUMB_D}
                   fill="none"
-                  stroke="#54636f"
+                  stroke="#18212c"
                   strokeWidth={13}
                   strokeLinecap="round"
                 />
-                <path d={PALM_D} fill="url(#srd-skin)" />
+                <path d={GRIP_D} fill="url(#srd-skin)" />
+                {/* Пальцы — не формы, а борозды между ними. */}
+                {FINGERS.map((fy) => (
+                  <line
+                    key={fy}
+                    x1={GROOVE_X0}
+                    y1={fy}
+                    x2={GROOVE_X1}
+                    y2={fy + 2}
+                    stroke="#03060c"
+                    strokeWidth={2.4}
+                    strokeLinecap="round"
+                    opacity={0.75}
+                  />
+                ))}
+                {/* Холодная кромка сверху — свет с лобового стекла. */}
                 <path
-                  d={PALM_RIM_D}
+                  d={GRIP_RIM_D}
                   fill="none"
                   stroke={COLORS.neon}
-                  strokeWidth={2.2}
+                  strokeWidth={2}
                   strokeLinecap="round"
-                  opacity={0.45}
+                  opacity={0.5}
                 />
+                {/* Тёплый отсвет снизу — красная приборка. */}
                 <path
-                  d="M 18 -20 C 28 -12 30 10 16 24"
+                  d={GRIP_BOUNCE_D}
                   fill="none"
-                  stroke="#1b242f"
-                  strokeWidth={1.6}
-                  opacity={0.7}
+                  stroke={COLORS.gauge}
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  opacity={0.28}
                 />
               </g>
             ))}

@@ -1,12 +1,12 @@
 /**
  * Фонари на обочине и огни далёкого городка — весь мелкий свет, который задаёт
- * ночи масштаб. В референсе это два разных слоя: цепочка бирюзовых фонарей,
+ * ночи масштаб. В референсе это два разных слоя: цепочка холодных фонарей,
  * уходящая за поворот (кадр f_005), и россыпь тёплых и красных точек на склоне
  * за пару километров (кадр f_007).
  *
  * Слои:
  *   1. столбы — один InstancedMesh на слитой геометрии «мачта + вылет + голова»;
- *   2. свечение головы — аддитивные квады с мягким ореолом;
+ *   2. ореол головы — аддитивные квады с мягким свечением;
  *   3. пятно света на асфальте — аддитивный эллипс, лежащий на полотне. Именно
  *      он делает дорогу освещённой, а не раскрашенной: без него фонарь висит
  *      сам по себе и читается как наклейка;
@@ -17,7 +17,9 @@
  *
  * Ни одной аллокации в кадре: колбэки обходов подняты в модуль и читают общий
  * контекст `walk`, матрицы и цвета — модульный скретч, пулы фиксированы под
- * пресет качества, лишние слоты прячутся нулевым масштабом.
+ * пресет качества. Лишние слоты не прячутся нулевым масштабом, а просто не
+ * рисуются: `InstancedMesh.count` и `setDrawRange` обрезают хвост, и GPU не
+ * прогоняет вершины вырожденных инстансов.
  */
 
 import { useEffect, useRef } from "react";
@@ -26,39 +28,56 @@ import * as THREE from "three";
 
 import type { Game, Lamp, Quality, TownLight } from "../types";
 import { COLORS, PHYS, QUALITY, ROAD } from "../config";
-import { localX, localY, localZ, roadPitch } from "../road";
+import { localX, localY, localZ, roadDY } from "../road";
 import { clamp01, damp, lerp, smoothstep } from "../num";
 import { hash1 } from "../rng";
 
 /* ---------- раскладка фонаря ---------- */
 
-/** Высота мачты, м. */
-const LAMP_H = 8.2;
+/**
+ * Высота мачты, м. Намеренно выше средней кроны: `worldGen` ставит деревья
+ * 4…17 м вплотную за отбойником, и на восьмиметровой мачте голова фонаря в
+ * полусотне метров ещё видна, а весь ряд дальше — уже нет, он тонет в
+ * лесополосе. В кадре важен не столб, а цепочка голов, уходящая за поворот.
+ */
+const LAMP_H = 11;
 /** Длина вылета к дороге, м. */
-const ARM_LEN = 2.4;
+const ARM_LEN = 2.9;
 /** Высота головы над полотном, м. */
-const HEAD_Y = LAMP_H - 0.34;
+const HEAD_Y = LAMP_H - 0.4;
 /** Мачта стоит между отбойником и лесополосой. */
 const POST_X = ROAD.railX + 1.15;
 /** Голова свешивается над обочиной. */
 const HEAD_X = POST_X - ARM_LEN;
 /** Центр светового пятна — над внешней полосой. */
-const POOL_X = 5.4;
+const POOL_X = 5.2;
 /** Пятно лежит чуть выше разметки: свет поверх краски, а не под ней. */
 const POOL_Y = 0.05;
-/** Габарит квада пятна, м (видимая часть — около 60% от него). */
-const POOL_W = 9.5;
-const POOL_L = 13;
+/**
+ * Габарит квада пятна, м (видимая часть — около 60% от него). Полоса дороги
+ * в кадре занимает считанные десятки пикселей по вертикали, поэтому пятно
+ * читается шириной, а не длиной: узкий эллипс на таком угле просто исчезает.
+ */
+const POOL_W = 12;
+const POOL_L = 18;
+/** Дальше этого пятно не рисуется вовсе — квад стоил бы дороже, чем виден. */
+const POOL_FAR = 460;
 
-/** Базовый размер квада свечения, м, и предел его «раздувания» с дистанцией. */
-const GLOW_SIZE = 2.5;
-const GLOW_GROW = 210;
-const GLOW_GROW_MAX = 3.6;
+/**
+ * Базовый размер квада ореола, м, и нижний предел его углового размера, рад.
+ * Чистая перспектива уводит ореол на восьмистах метрах в пару пикселей, и ряд
+ * фонарей за поворотом рассыпается в мерцающую пыль; предел держит дальние
+ * головы примерно на 0.6° и оставляет цепочку читаемой до самого тумана.
+ */
+const GLOW_SIZE = 3.6;
+const GLOW_MIN_ANG = 0.0112;
+/** Сдвиг ореола к камере, м: иначе коробка головы выедает середину квада. */
+const GLOW_Z_BIAS = 0.35;
 
 /** Яркости слоёв (уходят в instanceColor, поэтому могут быть больше единицы). */
-const GLOW_GAIN = 1.55;
-const POOL_GAIN = 0.9;
-const TOWN_GAIN = 1.15;
+const GLOW_GAIN = 2;
+const POOL_GAIN = 1.3;
+const TOWN_GAIN = 1.55;
 
 /** Сколько метров позади камеры ещё имеет смысл держать фонарь. */
 const LAMP_BEHIND = 10;
@@ -70,18 +89,24 @@ const TOWN_NEAR = 45;
 /** Дальность огней городка по пресетам качества, м. */
 const TOWN_FAR: readonly number[] = [620, 850, 1000];
 /**
- * Грубый отсев за краем кадра: точка дальше `depth * TOWN_SPREAD` вбок или
- * вверх заведомо не в кадре. Нужен не ради заполнения GPU, а ради пула — иначе
- * невидимые огни у самой камеры съедают слоты, и до видимой грозди на горизонте
- * очередь не доходит.
+ * Запас к границам пирамиды видимости при отсеве огней городка. Отсев нужен не
+ * ради заполнения GPU, а ради пула: огни сидят в 120…420 м вбок, и на близких
+ * дистанциях они гарантированно за краем кадра — но обход отдаёт их первыми и
+ * они съедают слоты, до которых видимой грозди на горизонте уже не хватает.
+ * По горизонтали запас больше: камера доворачивает по курсу дороги до ~9°.
  */
-const TOWN_SPREAD = 1.25;
+const TOWN_MARGIN_X = 1.5;
+const TOWN_MARGIN_Y = 1.3;
+/** Тангенс половины вертикального угла на случай, если камера не перспективная. */
+const TOWN_TAN_FALLBACK = 0.75;
+/** Аспект на случай нулевого канваса в первом кадре. */
+const TOWN_ASPECT_FALLBACK = 1.6;
 /** Базовый размер точки городка в пикселях и дистанция, на которой он верен. */
-const TOWN_PX = 2.7;
-const TOWN_REF = 320;
-
-/** Куда прячутся незанятые слоты пулов. */
-const HIDE_Y = -1e4;
+const TOWN_PX = 3.4;
+const TOWN_REF = 340;
+/** Пределы хода перспективы для точки: ниже — огонёк схлопывается в ничто. */
+const TOWN_MIN = 1;
+const TOWN_MAX = 2.3;
 
 /* ---------- скретч кадра ---------- */
 
@@ -89,15 +114,20 @@ const _m4 = new THREE.Matrix4();
 const _pos = new THREE.Vector3();
 const _scl = new THREE.Vector3();
 const _q = new THREE.Quaternion();
-/** Единичный поворот: квады свечения смотрят в +Z. */
+/** Единичный поворот: квады ореола смотрят в +Z, правые мачты не повёрнуты. */
 const _qi = new THREE.Quaternion();
-const _eu = new THREE.Euler();
+/**
+ * Разворот на 180° вокруг Y — левая обочина. Раньше сторона задавалась
+ * отрицательным масштабом по X, а он выворачивает обход треугольников и
+ * требует DoubleSide; поворот даёт то же зеркало (геометрия симметрична по Z)
+ * и позволяет рисовать мачты одной стороной.
+ */
+const _qFlip = new THREE.Quaternion(0, 1, 0, 0);
 const _col = new THREE.Color();
 const _mk = new THREE.Color();
 
-const _hide = new THREE.Matrix4();
-_hide.makeScale(0, 0, 0);
-_hide.setPosition(0, HIDE_Y, 0);
+/** cos(π/4) = sin(π/4) — половинный угол поворота «положить квад на дорогу». */
+const Q_HALF = Math.SQRT1_2;
 
 /* ---------- текстуры ---------- */
 
@@ -128,6 +158,8 @@ const RGB_B = new Uint8Array(3);
  * Мягкий радиальный ореол: узкое ядро плюс широкая юбка. Два лепестка вместо
  * одного гаусса — иначе либо ядро тонет, либо юбка обрубается краем квада.
  * Цвет идёт от `core` в центре к `edge` по краю.
+ *
+ * 64 пикселя хватает с запасом: это размытое пятно, а не спрайт с деталью.
  */
 function radialTex(
   size: number,
@@ -220,8 +252,9 @@ function mergeParts(parts: readonly THREE.BufferGeometry[]): THREE.BufferGeometr
 }
 
 /**
- * Мачта + вылет + голова, основанием в нуле, вылет уходит в −X. Правая и левая
- * обочины различаются зеркалом по X через масштаб инстанса.
+ * Мачта + вылет + голова, основанием в нуле, вылет уходит в −X. Левая обочина
+ * получает разворот на 180° вокруг Y — коробки симметричны по Z, так что это
+ * ровно то же зеркало, но без выворота нормалей.
  *
  * Вершинный цвет — вертикальный градиент: низ почти растворён в ночи, верх
  * ловит свет собственной лампы. Инстансный цвет поверх него гасит дальние
@@ -267,22 +300,33 @@ attribute vec3 aColor;
 uniform float uSize;
 uniform float uRef;
 uniform float uDpr;
+uniform float uMin;
+uniform float uMax;
 varying vec3 vColor;
 void main() {
   vColor = aColor;
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   float d = max(1.0, -mv.z);
-  gl_PointSize = uSize * uDpr * clamp(uRef / d, 0.55, 2.4);
+  gl_PointSize = uSize * uDpr * clamp(uRef / d, uMin, uMax);
   gl_Position = projectionMatrix * mv;
 }
 `;
 
+/**
+ * Профиль огонька считается на лету, а не берётся из текстуры. Текстура тут
+ * ровно та же по форме, но спрайт в 2…3 пикселя уходит на дальний мип, где от
+ * ядра остаётся средняя альфа по всему квадрату — примерно 0.17, то есть
+ * далёкий городок гаснет ровно там, где он и должен читаться. Заодно это
+ * минус одна текстура и минус выборка на фрагмент.
+ */
 const TOWN_FRAG = /* glsl */ `
-uniform sampler2D uMap;
 varying vec3 vColor;
 void main() {
-  float a = texture2D(uMap, gl_PointCoord).a;
-  if (a < 0.004) discard;
+  vec2 pc = gl_PointCoord - 0.5;
+  float r2 = dot(pc, pc) * 4.0;
+  if (r2 > 1.0) discard;
+  float a = exp(-r2 * 5.5) + 0.38 * exp(-r2 * 1.6);
+  a = min(a, 1.0) * (1.0 - r2 * r2);
   gl_FragColor = vec4(vColor, a);
   #include <colorspace_fragment>
 }
@@ -291,7 +335,7 @@ void main() {
 /* ---------- ресурсы ---------- */
 
 interface TownRes {
-  pts: THREE.Points;
+  geo: THREE.BufferGeometry;
   pos: Float32Array;
   col: Float32Array;
   posAttr: THREE.BufferAttribute;
@@ -313,6 +357,17 @@ interface LightsWorld {
   dispose: () => void;
 }
 
+/** Разбудить instanceColor до первого кадра и пометить буферы как «часто меняются». */
+function primeInstance(mesh: THREE.InstancedMesh): void {
+  _col.setRGB(1, 1, 1);
+  mesh.setColorAt(0, _col);
+  if (mesh.instanceColor) mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  // До первого обхода рисовать нечего: счётчик поднимет `useFrame`.
+  mesh.count = 0;
+  mesh.frustumCulled = false;
+}
+
 function buildLights(q: Quality): LightsWorld {
   const preset = QUALITY[q];
   const group = new THREE.Group();
@@ -330,19 +385,16 @@ function buildLights(q: Quality): LightsWorld {
   const postMat = new THREE.MeshBasicMaterial({
     color: 0xffffff,
     vertexColors: true,
-    // Зеркало по X переворачивает обход треугольников, поэтому обе стороны.
-    side: THREE.DoubleSide,
     fog: true,
   });
   mats.push(postMat);
   const posts = new THREE.InstancedMesh(postGeom, postMat, lampCap);
-  posts.frustumCulled = false;
-  posts.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  primeInstance(posts);
   group.add(posts);
 
-  /* --- 2. свечение головы --- */
+  /* --- 2. ореол головы --- */
 
-  const glowTex = radialTex(128, COLORS.star, COLORS.lampGlow, 15, 2.1, 0.6);
+  const glowTex = radialTex(64, COLORS.star, COLORS.neon, 15, 2.1, 0.6);
   let glow: THREE.InstancedMesh | null = null;
   if (glowTex) {
     texs.push(glowTex);
@@ -359,15 +411,14 @@ function buildLights(q: Quality): LightsWorld {
     });
     mats.push(mat);
     glow = new THREE.InstancedMesh(geo, mat, lampCap);
-    glow.frustumCulled = false;
+    primeInstance(glow);
     glow.renderOrder = 8;
-    glow.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     group.add(glow);
   }
 
   /* --- 3. пятно света на асфальте --- */
 
-  const poolTex = radialTex(128, COLORS.lampGlow, COLORS.neonDeep, 3.2, 0.9, 0.5);
+  const poolTex = radialTex(64, COLORS.lampGlow, COLORS.neonDeep, 3.2, 0.9, 0.5);
   let pool: THREE.InstancedMesh | null = null;
   if (poolTex) {
     texs.push(poolTex);
@@ -384,83 +435,76 @@ function buildLights(q: Quality): LightsWorld {
     });
     mats.push(mat);
     pool = new THREE.InstancedMesh(geo, mat, lampCap);
-    pool.frustumCulled = false;
+    primeInstance(pool);
     pool.renderOrder = 6;
-    pool.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     group.add(pool);
-  }
-
-  // Стартовое состояние пулов: слоты спрятаны, instanceColor уже существует —
-  // в кадре останется только пометить его грязным.
-  _col.setRGB(1, 1, 1);
-  for (let i = 0; i < lampCap; i++) {
-    posts.setMatrixAt(i, _hide);
-    posts.setColorAt(i, _col);
-    if (glow) {
-      glow.setMatrixAt(i, _hide);
-      glow.setColorAt(i, _col);
-    }
-    if (pool) {
-      pool.setMatrixAt(i, _hide);
-      pool.setColorAt(i, _col);
-    }
   }
 
   /* --- 4. огни городка --- */
 
-  const dotTex = radialTex(32, "#ffffff", "#ffffff", 6, 1.7, 0.35);
-  let townRes: TownRes | null = null;
-  if (dotTex) {
-    texs.push(dotTex);
-    const pos = new Float32Array(townCap * 3);
-    const col = new Float32Array(townCap * 3);
-    for (let i = 0; i < townCap; i++) pos[i * 3 + 1] = HIDE_Y;
+  const pos = new Float32Array(townCap * 3);
+  const col = new Float32Array(townCap * 3);
+  const posAttr = new THREE.BufferAttribute(pos, 3);
+  posAttr.setUsage(THREE.DynamicDrawUsage);
+  const colAttr = new THREE.BufferAttribute(col, 3);
+  colAttr.setUsage(THREE.DynamicDrawUsage);
+  const townGeo = new THREE.BufferGeometry();
+  townGeo.setAttribute("position", posAttr);
+  townGeo.setAttribute("aColor", colAttr);
+  // Хвост пула не рисуется вовсе, поэтому и гасить его не нужно.
+  townGeo.setDrawRange(0, 0);
+  geoms.push(townGeo);
 
-    const posAttr = new THREE.BufferAttribute(pos, 3);
-    posAttr.setUsage(THREE.DynamicDrawUsage);
-    const colAttr = new THREE.BufferAttribute(col, 3);
-    colAttr.setUsage(THREE.DynamicDrawUsage);
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", posAttr);
-    geo.setAttribute("aColor", colAttr);
-    geo.setDrawRange(0, 0);
-    geoms.push(geo);
+  const townMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uSize: { value: TOWN_PX },
+      uRef: { value: TOWN_REF },
+      uDpr: { value: 1 },
+      uMin: { value: TOWN_MIN },
+      uMax: { value: TOWN_MAX },
+    },
+    vertexShader: TOWN_VERT,
+    fragmentShader: TOWN_FRAG,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+    fog: false,
+  });
+  mats.push(townMat);
 
-    const mat = new THREE.ShaderMaterial({
-      uniforms: {
-        uMap: { value: dotTex },
-        uSize: { value: TOWN_PX },
-        uRef: { value: TOWN_REF },
-        uDpr: { value: 1 },
-      },
-      vertexShader: TOWN_VERT,
-      fragmentShader: TOWN_FRAG,
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      toneMapped: false,
-      fog: false,
-    });
-    mats.push(mat);
-
-    const tints = COLORS.town.length;
-    const rgb = new Float32Array(tints * 3);
-    for (let i = 0; i < tints; i++) {
-      _mk.set(COLORS.town[i]);
-      rgb[i * 3] = _mk.r;
-      rgb[i * 3 + 1] = _mk.g;
-      rgb[i * 3 + 2] = _mk.b;
-    }
-
-    const pts = new THREE.Points(geo, mat);
-    pts.frustumCulled = false;
-    pts.renderOrder = 7;
-    group.add(pts);
-
-    townRes = { pts, pos, col, posAttr, colAttr, mat, rgb, tints, cap: townCap };
+  const tints = COLORS.town.length;
+  const rgb = new Float32Array(tints * 3);
+  for (let i = 0; i < tints; i++) {
+    _mk.set(COLORS.town[i]);
+    rgb[i * 3] = _mk.r;
+    rgb[i * 3 + 1] = _mk.g;
+    rgb[i * 3 + 2] = _mk.b;
   }
 
+  const pts = new THREE.Points(townGeo, townMat);
+  pts.frustumCulled = false;
+  pts.renderOrder = 7;
+  group.add(pts);
+
+  const townRes: TownRes = {
+    geo: townGeo,
+    pos,
+    col,
+    posAttr,
+    colAttr,
+    mat: townMat,
+    rgb,
+    tints,
+    cap: townCap,
+  };
+
   const dispose = () => {
+    // InstancedMesh.dispose освобождает буферы инстансов; геометрия и материал
+    // общие и снимаются отдельно.
+    posts.dispose();
+    if (glow) glow.dispose();
+    if (pool) pool.dispose();
     for (const m of mats) m.dispose();
     for (const geo of geoms) geo.dispose();
     for (const t of texs) t.dispose();
@@ -486,7 +530,12 @@ interface WalkCtx {
   stretch: number;
   lampFar: number;
   townFar: number;
+  /** Тангенсы половин углов пирамиды видимости с запасом. */
+  spreadX: number;
+  spreadY: number;
   nLamp: number;
+  /** Сколько фонарей попало в радиус светового пятна (всегда префикс `nLamp`). */
+  nPool: number;
   nTown: number;
 }
 
@@ -500,7 +549,10 @@ const walk: WalkCtx = {
   stretch: 1,
   lampFar: 620,
   townFar: 850,
+  spreadX: 1.2,
+  spreadY: 0.98,
   nLamp: 0,
+  nPool: 0,
   nTown: 0,
 };
 
@@ -522,7 +574,8 @@ function onLamp(l: Lamp): void {
   const sc = 0.9 + h * 0.22;
 
   // Дальние тонут в ночи, ближние не должны слепить, пролетая мимо камеры.
-  let bri = smoothstep(walk.lampFar, walk.lampFar * 0.55, d) * smoothstep(-2, 26, d);
+  // Спад отодвинут почти к границе дальности: цепочка должна доживать до тумана.
+  let bri = smoothstep(walk.lampFar, walk.lampFar * 0.72, d) * smoothstep(-2, 26, d);
   if (!walk.calm && hash1(key + 7) > 0.86) {
     // Каждый седьмой фонарь на издыхании: натриевая лампа мигает.
     bri *= 0.78 + 0.22 * Math.sin(walk.t * 19 + h * 40);
@@ -533,20 +586,23 @@ function onLamp(l: Lamp): void {
 
   /* мачта */
   _pos.set(localX(s, side * POST_X, camS, camX), localY(s, 0, camS), z);
-  _scl.set(side, sc, 1);
-  _m4.compose(_pos, _qi, _scl);
+  _scl.set(1, sc, 1);
+  _m4.compose(_pos, side > 0 ? _qi : _qFlip, _scl);
   w.posts.setMatrixAt(i, _m4);
-  const fade = lerp(0.2, 1, smoothstep(walk.lampFar * 0.85, 45, d));
+  const fade = lerp(0.2, 1, smoothstep(walk.lampFar * 0.9, 45, d));
   _col.setRGB(fade, fade, fade);
   w.posts.setColorAt(i, _col);
 
-  /* свечение головы: плоскость смотрит в +Z. Камера стоит в начале координат и
+  /* ореол головы: плоскость смотрит в +Z. Камера стоит в начале координат и
      смотрит в −Z, отклоняясь на единицы градусов, — настоящий билборд на
      инстанс тут не окупается, разница меньше пикселя. */
   if (w.glow) {
-    const size =
-      GLOW_SIZE * (d > 0 ? Math.min(1 + d / GLOW_GROW, GLOW_GROW_MAX) : 1);
-    _pos.set(localX(s, side * HEAD_X, camS, camX), localY(s, HEAD_Y * sc, camS), z);
+    const size = d * GLOW_MIN_ANG > GLOW_SIZE ? d * GLOW_MIN_ANG : GLOW_SIZE;
+    _pos.set(
+      localX(s, side * HEAD_X, camS, camX),
+      localY(s, HEAD_Y * sc, camS),
+      z + GLOW_Z_BIAS,
+    );
     _scl.set(size, size, 1);
     _m4.compose(_pos, _qi, _scl);
     w.glow.setMatrixAt(i, _m4);
@@ -556,17 +612,25 @@ function onLamp(l: Lamp): void {
   }
 
   /* пятно на асфальте: квад кладётся на полотно и доворачивается на уклон
-     дороги — без этого дальний край тринадцатиметрового эллипса уходит под
+     дороги — без этого дальний край восемнадцатиметрового эллипса уходит под
      асфальт на подъёме и обрезается тестом глубины. Курс не отрабатываем:
-     размытое пятно повёрнутым не читается. */
-  if (w.pool) {
-    _eu.set(-Math.PI * 0.5 + roadPitch(s), 0, 0, "XYZ");
-    _q.setFromEuler(_eu);
+     размытое пятно повёрнутым не читается.
+
+     Обход идёт по возрастанию дистанции, поэтому «ближе POOL_FAR» — всегда
+     префикс списка фонарей: достаточно счётчика, отдельный слот не нужен. */
+  if (w.pool && d < POOL_FAR) {
+    walk.nPool = i + 1;
+    // Уклон дороги не превышает 0.038 рад, поэтому кватернион поворота вокруг X
+    // на (−π/2 + p) собирается из малых углов напрямую: sin(p/2) ≈ p/2,
+    // cos(p/2) ≈ 1. Ошибка нормы ~2e-4 — для размытого пятна ничто, зато это
+    // шесть тригонометрических вызовов на фонарь, которых больше нет.
+    const hp = roadDY(s) * 0.5;
+    _q.set(Q_HALF * (hp - 1), 0, 0, Q_HALF * (hp + 1));
     _pos.set(localX(s, side * POOL_X, camS, camX), localY(s, POOL_Y, camS), z);
     _scl.set(POOL_W, POOL_L * walk.stretch, 1);
     _m4.compose(_pos, _q, _scl);
     w.pool.setMatrixAt(i, _m4);
-    const pb = bri * POOL_GAIN * smoothstep(340, 40, d);
+    const pb = bri * POOL_GAIN * smoothstep(POOL_FAR, POOL_FAR * 0.28, d);
     _col.setRGB(pb, pb, pb);
     w.pool.setColorAt(i, _col);
   }
@@ -583,14 +647,17 @@ function onTown(t: TownLight): void {
   if (depth < TOWN_NEAR || depth > walk.townFar) return;
   const lx = localX(t.s, t.lane, camS, walk.camX);
   const ly = localY(t.s, t.y, camS);
-  const lim = depth * TOWN_SPREAD;
-  if (lx > lim || lx < -lim || ly > lim) return;
+  const limX = depth * walk.spreadX;
+  const limY = depth * walk.spreadY;
+  if (lx > limX || lx < -limX || ly > limY || ly < -limY) return;
 
   const dist = Math.sqrt(lx * lx + ly * ly + depth * depth);
+  // Спад к границе дальности короткий (последние ~14%): гроздь на горизонте —
+  // это и есть кадр f_007, гасить её на половине дистанции нечем оправдать.
   let b =
-    smoothstep(walk.townFar, walk.townFar * 0.72, depth) *
+    smoothstep(walk.townFar, walk.townFar * 0.86, depth) *
     smoothstep(TOWN_NEAR, TOWN_NEAR * 2.2, depth) *
-    lerp(1, 0.45, smoothstep(240, 950, dist));
+    lerp(1, 0.72, smoothstep(300, 1000, dist));
   if (!walk.calm) {
     // Сцинтилляция: далёкий огонь дрожит сам по себе, фаза привязана к дистанции.
     const ph = hash1(Math.round(t.s * 2) * 7 + t.tint);
@@ -617,8 +684,6 @@ interface Anim {
   dim: number;
   /** Растяжение светового пятна вдоль дороги на скорости. */
   stretch: number;
-  /** Сколько слотов городка было занято в прошлом кадре. */
-  prevTown: number;
 }
 
 export interface LightsProps {
@@ -645,7 +710,7 @@ export function Lights({ g, lamps, town }: LightsProps) {
 
   const animRef = useRef<Anim | null>(null);
   if (animRef.current === null) {
-    animRef.current = { t: 0, dim: 1, stretch: 1, prevTown: 0 };
+    animRef.current = { t: 0, dim: 1, stretch: 1 };
   }
 
   // Освобождение отложено на тик: StrictMode размонтирует компонент и тут же
@@ -676,8 +741,20 @@ export function Lights({ g, lamps, town }: LightsProps) {
     anim.t += dt;
 
     const speedFrac = clamp01(g.speed / PHYS.speedMax);
-    anim.dim = damp(anim.dim, 1 - 0.22 * speedFrac, 2.2, dt);
-    anim.stretch = damp(anim.stretch, 1 + 0.5 * speedFrac, 2.6, dt);
+    anim.dim = damp(anim.dim, 1 - 0.14 * speedFrac, 2.2, dt);
+    anim.stretch = damp(anim.stretch, 1 + 0.35 * speedFrac, 2.6, dt);
+
+    // Границы кадра берутся у самой камеры: FOV гуляет на нитро, аспект — на
+    // повороте телефона, а на первом кадре канвас может быть ещё 0×0 и отдать
+    // нулевой или нечисловой аспект. Отсев по фиксированной константе на
+    // портретном экране выбрасывал видимые огни и пропускал невидимые.
+    const cam = state.camera;
+    let tanY = TOWN_TAN_FALLBACK;
+    let asp = TOWN_ASPECT_FALLBACK;
+    if (cam instanceof THREE.PerspectiveCamera) {
+      if (cam.fov > 0 && cam.fov < 180) tanY = Math.tan((cam.fov * Math.PI) / 360);
+      if (cam.aspect > 0 && cam.aspect < 100) asp = cam.aspect;
+    }
 
     walk.w = res;
     walk.camS = g.s;
@@ -688,26 +765,34 @@ export function Lights({ g, lamps, town }: LightsProps) {
     walk.stretch = g.reducedMotion ? 1 : anim.stretch;
     walk.lampFar = LAMP_FAR[g.quality];
     walk.townFar = TOWN_FAR[g.quality];
+    walk.spreadX = tanY * asp * TOWN_MARGIN_X;
+    walk.spreadY = tanY * TOWN_MARGIN_Y;
     walk.nLamp = 0;
+    walk.nPool = 0;
     walk.nTown = 0;
 
     /* --- фонари: обход идёт от камеры вперёд, поэтому пул сначала забирают
            ближние; когда слоты кончились, дальние просто не рисуются --- */
     lamps(g.s - LAMP_BEHIND, g.s + walk.lampFar, onLamp);
-    for (let i = walk.nLamp; i < res.lampCap; i++) {
-      res.posts.setMatrixAt(i, _hide);
-      if (res.glow) res.glow.setMatrixAt(i, _hide);
-      if (res.pool) res.pool.setMatrixAt(i, _hide);
+    const nLamp = walk.nLamp;
+    res.posts.count = nLamp;
+    if (nLamp > 0) {
+      res.posts.instanceMatrix.needsUpdate = true;
+      if (res.posts.instanceColor) res.posts.instanceColor.needsUpdate = true;
     }
-    res.posts.instanceMatrix.needsUpdate = true;
-    if (res.posts.instanceColor) res.posts.instanceColor.needsUpdate = true;
     if (res.glow) {
-      res.glow.instanceMatrix.needsUpdate = true;
-      if (res.glow.instanceColor) res.glow.instanceColor.needsUpdate = true;
+      res.glow.count = nLamp;
+      if (nLamp > 0) {
+        res.glow.instanceMatrix.needsUpdate = true;
+        if (res.glow.instanceColor) res.glow.instanceColor.needsUpdate = true;
+      }
     }
     if (res.pool) {
-      res.pool.instanceMatrix.needsUpdate = true;
-      if (res.pool.instanceColor) res.pool.instanceColor.needsUpdate = true;
+      res.pool.count = walk.nPool;
+      if (walk.nPool > 0) {
+        res.pool.instanceMatrix.needsUpdate = true;
+        if (res.pool.instanceColor) res.pool.instanceColor.needsUpdate = true;
+      }
     }
 
     /* --- городок --- */
@@ -715,18 +800,11 @@ export function Lights({ g, lamps, town }: LightsProps) {
     if (tr) {
       town(g.s, g.s + walk.townFar, onTown);
       const used = walk.nTown;
-      // Гасим только то, что занимал прошлый кадр: полный проход по пулу здесь
-      // ни к чему, drawRange и так обрезает хвост.
-      for (let i = used; i < anim.prevTown; i++) {
-        tr.pos[i * 3 + 1] = HIDE_Y;
-        tr.col[i * 3] = 0;
-        tr.col[i * 3 + 1] = 0;
-        tr.col[i * 3 + 2] = 0;
+      tr.geo.setDrawRange(0, used);
+      if (used > 0) {
+        tr.posAttr.needsUpdate = true;
+        tr.colAttr.needsUpdate = true;
       }
-      anim.prevTown = used;
-      tr.pts.geometry.setDrawRange(0, used);
-      tr.posAttr.needsUpdate = true;
-      tr.colAttr.needsUpdate = true;
       tr.mat.uniforms.uDpr.value = state.gl.getPixelRatio();
     }
 

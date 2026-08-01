@@ -137,11 +137,18 @@ export const PICKUPS = {
   gap: [150, 300] as const,
   /** Доля нитро-канистр среди бонусов (остальное — звёзды). */
   nitroShare: 0.3,
-  /** Высота над полотном, м. */
-  y: 1.5,
+  /**
+   * Высота над полотном, м. Глаза водителя на 1.16 м, поэтому на 1.5 м бонус
+   * висел ровно на линии горизонта и на любой дистанции сливался с ней. 2.6 м
+   * поднимает его над прицелом и вынимает из полосы тумана, но оставляет под
+   * крышей фуры.
+   */
+  y: 2.6,
   /** Радиус подбора: боковой и по дистанции, м. */
   grabLane: 1.5,
   grabS: 3.2,
+  /** Сколько метров позади держать подобранный бонус, чтобы доиграла анимация. */
+  keepBehind: 20,
   /** Звёзды часто идут дорожкой — сколько подряд. */
   chain: [1, 4] as const,
   chainStep: 22,
@@ -223,7 +230,7 @@ export const QUALITY: Record<Quality, QualityPreset> = {
     stars: 900,
     trees: 90,
     townLights: 70,
-    lamps: 14,
+    lamps: 10,
     bloom: false,
     bloomStrength: 0,
     bloomRadius: 0,
@@ -237,12 +244,21 @@ export const QUALITY: Record<Quality, QualityPreset> = {
     label: "обычно",
     stars: 2000,
     trees: 190,
-    townLights: 160,
-    lamps: 22,
+    // worldGen может выдать до ~210 огней в пределах видимости — с меньшим пулом
+    // дальний край городка просто обрубается.
+    townLights: 210,
+    // Фонари стоят не чаще чем раз в 70 м, дальше 900 м не видно: больше 12 в
+    // кадре не бывает физически.
+    lamps: 12,
     bloom: true,
-    bloomStrength: 0.82,
-    bloomRadius: 0.55,
-    bloomThreshold: 0.3,
+    // Сравнение одного и того же кадра с bloom и без него показало: свечение
+    // должно доставаться только по-настоящему ярким вещам — звезде, фарам,
+    // головам фонарей, приборке. Стоило порогу опуститься, и в свечение уходила
+    // разметка и блики на асфальте, а кадр затягивало молочной пеленой; тёплый
+    // оттенок ей давала жёлтая осевая, размазанная по всему небу.
+    bloomStrength: 0.5,
+    bloomRadius: 0.28,
+    bloomThreshold: 0.8,
     dprMax: 1.5,
     trails: true,
     roadSegments: 170,
@@ -253,11 +269,11 @@ export const QUALITY: Record<Quality, QualityPreset> = {
     stars: 3400,
     trees: 280,
     townLights: 260,
-    lamps: 30,
+    lamps: 14,
     bloom: true,
-    bloomStrength: 1.05,
-    bloomRadius: 0.62,
-    bloomThreshold: 0.24,
+    bloomStrength: 0.6,
+    bloomRadius: 0.3,
+    bloomThreshold: 0.8,
     dprMax: 1.9,
     trails: true,
     roadSegments: 200,
@@ -292,7 +308,9 @@ export const COLORS = {
   trunk: "#0a1420",
 
   rail: "#37455c",
-  railStud: "#7affc8",
+  // Янтарь, а не мята: раньше катафоты отбойника были байт в байт цвета нитро,
+  // и на скорости отблеск на ограждении читался как бонус.
+  railStud: "#ffb46a",
   lampGlow: "#9fd8ff",
 
   town: ["#ffcf8a", "#ff7a5a", "#7affc8", "#9fd0ff"] as const,

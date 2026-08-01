@@ -4,15 +4,19 @@
  * Два разных источника данных, и их нельзя путать:
  *
  * - `snap` (HudSnapshot) страница обновляет ~12 раз в секунду. Всё, что можно
- *   отрисовать «ступеньками» — очки, рекорд, жизни, глава, множитель, комбо, —
- *   рендерится из него обычным React-ом. React здесь дёшев: 12 Гц, не 60.
+ *   отрисовать «ступеньками» — очки, рекорд, жизни, множитель, комбо, — рендерится
+ *   из него обычным React-ом. React здесь дёшев: 12 Гц, не 60.
  * - `g` (мутируемый объект игры) читается только в rAF-цикле и в тач-обработчиках.
  *   Полоса нитро должна ползти плавно, поэтому её ширину пишем императивно в ref,
  *   а не через состояние: перерисовка React на 60 Гц — это то, чего вся
- *   архитектура игры избегает.
+ *   архитектура игры избегает. HUD ничего в `g` не пишет — это дело `input.ts`,
+ *   до которого страница пробрасывает мост `touch`.
  *
  * Верх экрана целиком наш, низ (≈46vh) принадлежит приборке, поэтому всё
  * информационное прижато к верхней кромке, а тач-кнопки живут выше линии панели.
+ * Приоритет по месту: центр верха — только жизни (их ловят боковым зрением),
+ * слева — счёт и ресурсы, справа — кнопки и множитель. Всё разовое (смена главы,
+ * комбо) вспыхивает и уходит, постоянного места не занимая.
  *
  * Контейнер `pointer-events: none` — сквозь него проходит драг по канвасу
  * (рулевая поверхность из `input.ts`). Интерактивные элементы включают
@@ -20,7 +24,7 @@
  * считался одновременно рулением.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
@@ -62,6 +66,29 @@ const NITRO_TRACK = 14;
 /** Насколько быстро тач-зона докручивает руль до упора, 1/с. */
 const STEER_TRACK = 16;
 
+/** Сколько миллисекунд висит вспышка смены главы. */
+const CHAPTER_FLASH_MS = 2400;
+
+/**
+ * Имена глав неба — ровно те слои, что включает `Sky` (см. docs/GAME.md).
+ * Номер главы растёт бесконечно, имя берётся по модулю, как и в самой сцене.
+ */
+const CHAPTER_NAMES = ["метеоры", "туманность", "воронка", "чистое небо"] as const;
+
+/** Сколько жизней рисуем слотами. Совпадает с `LIVES` в движке. */
+const LIFE_SLOTS = [0, 1, 2] as const;
+
+/**
+ * Габарит значка жизни. Одинаков у целой и потерянной — строка не должна дёргаться.
+ * Нижняя граница подобрана так, чтобы на 390 px плашка жизней не наехала на
+ * шестизначный счёт слева: там между колонками остаётся всего пара десятков px.
+ */
+const LIFE_BOX = { width: "clamp(24px, 6.2vw, 34px)", height: "auto", display: "block" } as const;
+
+/* Крыша с задним стеклом. Контур намеренно не замкнут: заливка закроет его сама,
+   а обводке потерянной жизни лишняя линия по верху корпуса только мешала бы. */
+const LIFE_ROOF = "M9 9.2 10.9 4.4C11.3 3.2 12 2.7 13.1 2.7h3.8c1.1 0 1.8.5 2.2 1.7L21 9.2";
+
 /* ---------- форматирование ---------- */
 
 /** Разряды тонкими пробелами: 1234567 → «1 234 567». */
@@ -86,32 +113,60 @@ function formatDistance(m: number): string {
 
 /* ---------- мелкая графика ---------- */
 
-/** Силуэт машинки для счётчика жизней. */
-function CarGlyph({ lost, tint }: { lost: boolean; tint: string }) {
+/**
+ * Значок жизни — машина сзади с горящими стопами. Разница «целая/потерянная»
+ * несёт не цвет, а форма: целая — сплошной силуэт с фонарями и колёсами,
+ * потерянная — пустой контур. Значит счёт читается и в оттенках серого, и
+ * боковым зрением, ради чего этот индикатор вообще существует.
+ */
+const LifeGlyph = memo(function LifeGlyph({ lost, tint }: { lost: boolean; tint: string }) {
+  if (lost) {
+    return (
+      <svg
+        viewBox="0 0 30 22"
+        style={LIFE_BOX}
+        aria-hidden="true"
+        fill="none"
+        stroke="rgba(186,210,242,0.32)"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      >
+        <path d={LIFE_ROOF} />
+        <rect x="3.4" y="9" width="23.2" height="7.8" rx="2.5" />
+      </svg>
+    );
+  }
   return (
-    <svg
-      viewBox="0 0 24 14"
-      width="19"
-      height="11"
-      aria-hidden="true"
-      style={{
-        opacity: lost ? 0.22 : 1,
-        filter: lost ? "none" : `drop-shadow(0 0 6px ${tint})`,
-      }}
-    >
-      <path
-        d="M2.4 10.2 3.6 6.4C4 5.2 4.6 4.2 6 4.2h12c1.4 0 2 1 2.4 2.2l1.2 3.8z"
-        fill={lost ? "#1a2740" : tint}
-        opacity={lost ? 1 : 0.9}
+    <svg viewBox="0 0 30 22" style={LIFE_BOX} aria-hidden="true">
+      {/* колёса — тот же тон, приглушённый: силуэт «стоит», а не висит */}
+      <g fill={tint} opacity="0.45">
+        <rect x="5.6" y="15.8" width="5.4" height="3.4" rx="1.4" />
+        <rect x="19" y="15.8" width="5.4" height="3.4" rx="1.4" />
+      </g>
+      <g fill={tint}>
+        <path d={LIFE_ROOF} />
+        <rect x="2.6" y="8.6" width="24.8" height="8.2" rx="2.6" />
+      </g>
+      {/* номерной знак — тёмный вырез, он и делает силуэт «машиной сзади» */}
+      <rect
+        x="12.4"
+        y="11.2"
+        width="5.2"
+        height="3"
+        rx="0.9"
+        fill={COLORS.night0}
+        opacity="0.85"
       />
-      <rect x="1" y="9.6" width="22" height="2.6" rx="1.3" fill={lost ? "#1a2740" : tint} />
-      <circle cx="5.6" cy="12.6" r="1.3" fill={lost ? "#101a2c" : "#04081a"} />
-      <circle cx="18.4" cy="12.6" r="1.3" fill={lost ? "#101a2c" : "#04081a"} />
+      {/* стопы. Тёмная обводка держит их читаемыми и когда корпус сам красный */}
+      <g fill={COLORS.tail} stroke={COLORS.night0} strokeWidth="0.9">
+        <rect x="4.6" y="10.6" width="6.4" height="3.6" rx="1.4" />
+        <rect x="19" y="10.6" width="6.4" height="3.6" rx="1.4" />
+      </g>
     </svg>
   );
-}
+});
 
-function PauseIcon({ paused }: { paused: boolean }) {
+const PauseIcon = memo(function PauseIcon({ paused }: { paused: boolean }) {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor">
       {paused ? (
@@ -124,9 +179,9 @@ function PauseIcon({ paused }: { paused: boolean }) {
       )}
     </svg>
   );
-}
+});
 
-function SoundIcon({ muted }: { muted: boolean }) {
+const SoundIcon = memo(function SoundIcon({ muted }: { muted: boolean }) {
   return (
     <svg
       viewBox="0 0 18 16"
@@ -153,13 +208,14 @@ function SoundIcon({ muted }: { muted: boolean }) {
       )}
     </svg>
   );
-}
+});
 
 /* ---------- компонент ---------- */
 
 export function Hud({ g, snap, onPause, onMute, touch }: HudProps) {
-  // Флаг постоянен на всё время жизни игры, читать его в рендере безопасно.
-  const calm = g.reducedMotion;
+  // Единственное чтение `g` вне rAF — и то один раз, ленивым инициализатором
+  // состояния: дальше рендер живёт только на `snap`, как и договаривались.
+  const [calm] = useState(() => g.reducedMotion);
   const playing = snap.phase === "playing" || snap.phase === "crashed";
   const idle = snap.phase === "menu" || snap.phase === "over";
 
@@ -173,6 +229,33 @@ export function Hud({ g, snap, onPause, onMute, touch }: HudProps) {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
+
+  /* --- потеря жизни: короткий «удар» по индикатору --- */
+  const [hitKey, setHitKey] = useState(0);
+  const prevLivesRef = useRef(snap.lives);
+  useEffect(() => {
+    const prev = prevLivesRef.current;
+    prevLivesRef.current = snap.lives;
+    // Рестарт возвращает жизни вверх — это не удар, анимацию не гоняем.
+    if (snap.lives < prev) setHitKey((k) => k + 1);
+  }, [snap.lives]);
+
+  /* --- смена главы: момент, а не постоянный показатель --- */
+  const [chapterFlash, setChapterFlash] = useState(-1);
+  const prevChapterRef = useRef(snap.chapter);
+  useEffect(() => {
+    const prev = prevChapterRef.current;
+    prevChapterRef.current = snap.chapter;
+    if (snap.chapter !== prev) setChapterFlash(snap.chapter);
+  }, [snap.chapter]);
+
+  // Отдельный эффект под таймер: иначе его сбрасывала бы любая другая зависимость,
+  // и вспышка залипала бы на экране навсегда.
+  useEffect(() => {
+    if (chapterFlash < 0) return;
+    const id = window.setTimeout(() => setChapterFlash(-1), CHAPTER_FLASH_MS);
+    return () => window.clearTimeout(id);
+  }, [chapterFlash]);
 
   /* --- плавные штуки живут в ref, а не в состоянии --- */
   const fillRef = useRef<HTMLDivElement>(null);
@@ -194,6 +277,10 @@ export function Hud({ g, snap, onPause, onMute, touch }: HudProps) {
 
   /* --- один rAF-цикл на всё непрерывное --- */
   useEffect(() => {
+    // В меню, на паузе и на экране конца ничего не течёт: ни нитро, ни руль.
+    // Держать ради этого 60 колбэков в секунду незачем.
+    if (!playing) return;
+
     let raf = 0;
     let prev =
       typeof performance !== "undefined" ? performance.now() : Date.now();
@@ -216,13 +303,17 @@ export function Hud({ g, snap, onPause, onMute, touch }: HudProps) {
         }
 
         // Пульс на активном нитро. При reduced-motion — ровное свечение без строба.
-        let pulse = 0;
-        if (g.nitroActive) pulse = calm ? 0.6 : 0.5 + 0.5 * Math.sin(now * 0.013);
-        const q = Math.round(pulse * 8) / 8;
+        // Только opacity: её крутит композитор. Фильтр brightness стоил бы
+        // отдельного прохода по слою на каждом изменении, а разницы не видно.
+        // −1 — «нитро выключено», полоса на полной непрозрачности.
+        let q = -1;
+        if (g.nitroActive) {
+          const pulse = calm ? 0.7 : 0.5 + 0.5 * Math.sin(now * 0.013);
+          q = Math.round(pulse * 6) / 6;
+        }
         if (q !== lastPulseRef.current) {
           lastPulseRef.current = q;
-          bar.style.opacity = (0.8 + 0.2 * q).toFixed(2);
-          bar.style.filter = q > 0 ? `brightness(${(1 + 0.55 * q).toFixed(2)})` : "none";
+          bar.style.opacity = q < 0 ? "1" : (0.6 + 0.4 * q).toFixed(2);
         }
       }
 
@@ -242,8 +333,14 @@ export function Hud({ g, snap, onPause, onMute, touch }: HudProps) {
     };
 
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [g, calm]);
+    return () => {
+      cancelAnimationFrame(raf);
+      // Снимаем пульс, иначе полоса застынет приглушённой на паузе.
+      lastPulseRef.current = -1;
+      const bar = fillRef.current;
+      if (bar !== null) bar.style.opacity = "1";
+    };
+  }, [g, calm, playing]);
 
   /* --- отпустить всё: при паузе, конце заезда и размонтировании --- */
   const releaseTouch = useCallback(() => {
@@ -295,10 +392,17 @@ export function Hud({ g, snap, onPause, onMute, touch }: HudProps) {
     [applySteerTarget],
   );
 
+  /**
+   * Отпускание. Висит и на `pointerleave`: если захват указателя не встал
+   * (см. catch в `onZoneDown`), палец, ушедший за границу зоны, иначе оставил бы
+   * руль выкрученным до упора навсегда. При живом захвате `pointerleave` до
+   * отпускания не приходит, так что лишних срабатываний это не даёт.
+   */
   const onZoneUp = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       e.stopPropagation();
       const st = steerRef.current;
+      if (st.rightId !== e.pointerId && st.leftId !== e.pointerId) return;
       if (st.rightId === e.pointerId) st.rightId = -1;
       if (st.leftId === e.pointerId) st.leftId = -1;
       applySteerTarget();
@@ -322,9 +426,11 @@ export function Hud({ g, snap, onPause, onMute, touch }: HudProps) {
     touchRef.current?.button(b, true);
   }, []);
 
+  /** То же самое для педалей: `pointerleave` — страховка на случай сорванного захвата. */
   const onPedalUp = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     const el = e.currentTarget;
+    if (el.dataset.on !== "1") return;
     const b = el.dataset.btn === "nitro" ? "nitro" : "brake";
     el.dataset.on = "0";
     touchRef.current?.button(b, false);
@@ -418,37 +524,78 @@ export function Hud({ g, snap, onPause, onMute, touch }: HudProps) {
             />
           </div>
         </div>
+
+        {/*
+          Глава неба. Раньше она стояла постоянной плашкой под жизнями и отбирала
+          у них и место, и внимание, хотя смысла несёт куда меньше: это событие, а
+          не показатель. Теперь — короткая вспышка в тихом углу, на смене главы и
+          с именем слоя, который в этот момент включается в небе. Стоит последней
+          в колонке, поэтому её появление ничего не двигает.
+        */}
+        <AnimatePresence initial={false} mode="wait">
+          {playing && chapterFlash >= 0 && (
+            <motion.div
+              key={chapterFlash}
+              initial={calm ? { opacity: 0 } : { opacity: 0, x: -12 }}
+              animate={calm ? { opacity: 0.9 } : { opacity: 0.9, x: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: calm ? 0.16 : 0.42, ease: "easeOut" }}
+              className="mt-2.5 whitespace-nowrap text-[10px] font-bold uppercase"
+              style={{
+                letterSpacing: "0.22em",
+                color: COLORS.neon,
+                textShadow: SHADOW_NEON,
+              }}
+            >
+              глава <span className="tnum">{chapterFlash + 1}</span>
+              <span style={{ opacity: 0.6 }}>
+                {" · "}
+                {CHAPTER_NAMES[chapterFlash % CHAPTER_NAMES.length]}
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
-      {/* ------ центр: жизни и глава неба ------ */}
+      {/* ------ центр: жизни ------ */}
       <div
-        className="absolute left-1/2 top-3 flex -translate-x-1/2 flex-col items-center gap-1.5 transition-opacity duration-300 sm:top-4"
+        className="absolute left-1/2 top-3 -translate-x-1/2 transition-opacity duration-300 sm:top-4"
         style={statsStyle}
         aria-hidden={idle}
       >
-        <div className="flex items-center gap-1.5" aria-label={`жизни: ${snap.lives}`} role="img">
-          <CarGlyph lost={snap.lives < 1} tint={lifeTint} />
-          <CarGlyph lost={snap.lives < 2} tint={lifeTint} />
-          <CarGlyph lost={snap.lives < 3} tint={lifeTint} />
-        </div>
-
-        <AnimatePresence initial={false} mode="wait">
-          <motion.div
-            key={snap.chapter}
-            initial={calm ? { opacity: 0 } : { opacity: 0, scale: 1.25, filter: "blur(3px)" }}
-            animate={calm ? { opacity: 0.85 } : { opacity: 0.85, scale: 1, filter: "blur(0px)" }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: calm ? 0.18 : 0.5, ease: "easeOut" }}
-            className="text-[10px] font-bold uppercase"
-            style={{
-              letterSpacing: "0.34em",
-              color: COLORS.neon,
-              textShadow: SHADOW_NEON,
-            }}
-          >
-            глава {snap.chapter + 1}
-          </motion.div>
-        </AnimatePresence>
+        {/*
+          Тёмная плашка обязательна: над этим местом проходят и блик-звезда, и
+          туманность, и на светлом небе одни только силуэты тонут.
+          Ключ по `hitKey` перемонтирует строку и переигрывает «удар» — потеря
+          жизни должна быть видна, даже если смотреть на дорогу.
+        */}
+        <motion.div
+          key={hitKey}
+          initial={calm ? { opacity: 0.45 } : { opacity: 0.5, scale: 1.28 }}
+          animate={calm ? { opacity: 1 } : { opacity: 1, scale: 1 }}
+          transition={
+            calm
+              ? { duration: 0.18 }
+              : { type: "spring", stiffness: 520, damping: 17, mass: 0.6 }
+          }
+          role="img"
+          aria-label={`жизни: ${snap.lives} из ${LIFE_SLOTS.length}`}
+          className="flex items-center rounded-full"
+          style={{
+            gap: "clamp(3px, 1vw, 7px)",
+            padding: "5px clamp(7px, 2vw, 11px)",
+            background: "rgba(4,8,26,0.55)",
+            // Ореол делаем box-shadow, а не drop-shadow: тот же вид, но без
+            // фильтра, то есть без отдельного слоя на каждый значок.
+            boxShadow: lastLife
+              ? "inset 0 0 0 1px rgba(255,74,58,0.5), 0 0 18px rgba(255,74,58,0.35)"
+              : "inset 0 0 0 1px rgba(94,203,255,0.24), 0 0 16px rgba(4,8,26,0.85)",
+          }}
+        >
+          {LIFE_SLOTS.map((i) => (
+            <LifeGlyph key={i} lost={snap.lives <= i} tint={lifeTint} />
+          ))}
+        </motion.div>
       </div>
 
       {/* ------ справа: кнопки, множитель, комбо ------ */}
@@ -462,8 +609,10 @@ export function Hud({ g, snap, onPause, onMute, touch }: HudProps) {
             className="grid h-9 w-9 place-items-center rounded-full border text-soft transition-colors active:scale-95"
             style={{
               borderColor: "rgba(94,203,255,0.28)",
-              background: "rgba(10,18,36,0.62)",
-              backdropFilter: "blur(6px)",
+              // Без backdrop-filter: он пересчитывает размытие подложки в каждом
+              // кадре живого canvas — на мобильном это заметная цена за эффект,
+              // которого на почти чёрном небе всё равно не видно.
+              background: "rgba(7,13,30,0.8)",
             }}
           >
             <PauseIcon paused={snap.phase === "paused"} />
@@ -478,8 +627,7 @@ export function Hud({ g, snap, onPause, onMute, touch }: HudProps) {
             className="grid h-9 w-9 place-items-center rounded-full border transition-colors active:scale-95"
             style={{
               borderColor: "rgba(94,203,255,0.28)",
-              background: "rgba(10,18,36,0.62)",
-              backdropFilter: "blur(6px)",
+              background: "rgba(7,13,30,0.8)",
               color: snap.muted ? COLORS.danger : "#c2d4ea",
             }}
           >
@@ -556,6 +704,7 @@ export function Hud({ g, snap, onPause, onMute, touch }: HudProps) {
             onPointerDown={onZoneDown}
             onPointerUp={onZoneUp}
             onPointerCancel={onZoneUp}
+            onPointerLeave={onZoneUp}
             onLostPointerCapture={onZoneUp}
             aria-hidden="true"
             className="pointer-events-auto absolute bottom-0 left-0 h-[34vh] w-[38vw]"
@@ -566,6 +715,7 @@ export function Hud({ g, snap, onPause, onMute, touch }: HudProps) {
             onPointerDown={onZoneDown}
             onPointerUp={onZoneUp}
             onPointerCancel={onZoneUp}
+            onPointerLeave={onZoneUp}
             onLostPointerCapture={onZoneUp}
             aria-hidden="true"
             className="pointer-events-auto absolute bottom-0 right-0 h-[34vh] w-[38vw]"
@@ -584,6 +734,7 @@ export function Hud({ g, snap, onPause, onMute, touch }: HudProps) {
               onPointerDown={onPedalDown}
               onPointerUp={onPedalUp}
               onPointerCancel={onPedalUp}
+              onPointerLeave={onPedalUp}
               onLostPointerCapture={onPedalUp}
               onContextMenu={(e) => e.preventDefault()}
               aria-label="Нитро"
@@ -606,6 +757,7 @@ export function Hud({ g, snap, onPause, onMute, touch }: HudProps) {
               onPointerDown={onPedalDown}
               onPointerUp={onPedalUp}
               onPointerCancel={onPedalUp}
+              onPointerLeave={onPedalUp}
               onLostPointerCapture={onPedalUp}
               onContextMenu={(e) => e.preventDefault()}
               aria-label="Тормоз"

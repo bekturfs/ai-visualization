@@ -172,15 +172,60 @@ console.log("state (пауза):", JSON.stringify(await probe(page)));
 await page.keyboard.press("Escape");
 await page.waitForTimeout(500);
 
-// вываливаемся на встречку, пока не кончатся жизни — проверяем аварию и «конец»
+// Проверяем аварию и экран «конец заезда». Рулём это не сделать: зажатая стрелка
+// уводит к отбойнику МИМО встречных полос, и заезд длится вечно. Поэтому ставим
+// машину в центр встречной полосы через отладочную ручку и ждём лобового.
+// Жизней оставляем одну. Не из лени: `step` зажимает dt до 1/20 с, поэтому в
+// SwiftShader при трёх кадрах в секунду игровое время идёт всемеро медленнее
+// реального, и три аварии подряд (каждая — crashTime плюс две секунды
+// неуязвимости) заняли бы минуты стены. Одного лобового достаточно, чтобы
+// проверить и подсчёт жизней, и экран конца заезда.
+await page.evaluate(() => {
+  if (globalThis.__ride.phase === "playing") globalThis.__ride.lives = 1;
+});
+const livesBefore = (await probe(page))?.lives ?? 0;
+// Ждать, пока встречная сама доедет, — лотерея: при двух кадрах в секунду это
+// минуты, и тест то падал, то нет. Ставим машину под колёса сами.
 for (let a = 0; a < 40; a++) {
   const st = await probe(page);
   if (!st || st.phase === "over") break;
-  await press(page, "ArrowLeft", 1400);
-  await page.waitForTimeout(600);
+  await page.evaluate(() => {
+    const g = globalThis.__ride;
+    if (g.phase !== "playing") return;
+    g.x = -1.85;
+    g.vx = 0;
+    const car = g.cars.find((c) => c.active && c.oncoming) ?? g.cars.find((c) => c.active);
+    if (car) {
+      car.lane = -1.85;
+      car.s = g.s + 6;
+      car.scored = false;
+    }
+  });
+  await page.waitForTimeout(350);
 }
+const after = await probe(page);
+if (after && after.lives >= livesBefore && after.phase !== "over") {
+  problems.push(
+    `ИГРА: заезд на встречной полосе не отнял ни одной жизни (было ${livesBefore}, стало ${after.lives})`,
+  );
+}
+if (after && after.phase !== "over") {
+  problems.push(`ИГРА: заезд не закончился, фаза ${after.phase}, жизней ${after.lives}`);
+}
+// Фазу меняет кадр, а оверлей рисует React со следующего снимка — без паузы
+// кадр ловит момент перехода, когда HUD уже свернулся, а диалог ещё не пришёл.
+await page.waitForTimeout(1200);
 await shot(page, `${String(i++).padStart(2, "0")}-crash-or-over`);
 console.log("state (после таранов):", JSON.stringify(await probe(page)));
+
+// Экран конца заезда действительно показан и предлагает переиграть?
+if (after && after.phase === "over") {
+  const over = page.getByRole("dialog");
+  if (!(await over.count())) problems.push("UI: заезд кончился, а диалога нет");
+  else if (!(await over.getByRole("button", { name: /ещё раз/i }).count())) {
+    problems.push("UI: на экране конца заезда нет кнопки «ещё раз»");
+  }
+}
 
 /* ---------------- мобильный портрет ---------------- */
 

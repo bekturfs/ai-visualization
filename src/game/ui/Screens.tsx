@@ -16,6 +16,18 @@
  * Единственное, что оверлей делает с вводом, — глушит `pointerdown`, чтобы
  * палец на кнопке не считался рулением (рулевая поверхность висит на обёртке
  * страницы и ловит всплывающие события).
+ *
+ * Модальность держится на двух вещах, и обе обязательны:
+ *
+ * - страница выключает всё под оверлеем атрибутом `inert` (см. `Ride.tsx`), и
+ *   решает она это по `overlayScreen()` — той же функции, что выбирает экран
+ *   здесь. Один источник правды: «показан диалог» и «фон выключен» не могут
+ *   разъехаться;
+ * - фокус заперт внутри диалога (Tab с последней кнопки уходит на первую),
+ *   а возвращает его на игровую поверхность страница — оверлей закрывается
+ *   всегда в едущий заезд, и клавиатура в этот момент должна принадлежать игре,
+ *   а не кнопке HUD, на которой иначе остался бы фокус (тогда Space нажимал бы
+ *   «паузу» вместо нитро).
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -27,10 +39,23 @@ import type {
 } from "react";
 import { motion } from "motion/react";
 
-import type { HudSnapshot, Quality } from "../types";
+import type { HudSnapshot, Phase, Quality } from "../types";
 import { COLORS, QUALITY } from "../config";
 
 /* ---------- контракт ---------- */
+
+export type ScreenKey = "menu" | "paused" | "over" | "help";
+
+/**
+ * Какой экран должен быть показан — единственный источник правды и для самого
+ * оверлея, и для страницы, которая по нему гасит фон. Панель управления
+ * перекрывает всё: её открывают и из меню, и из паузы.
+ */
+export function overlayScreen(phase: Phase, showHelp: boolean): ScreenKey | null {
+  if (showHelp) return "help";
+  if (phase === "menu" || phase === "paused" || phase === "over") return phase;
+  return null;
+}
 
 export interface ScreensProps {
   snap: HudSnapshot;
@@ -46,6 +71,12 @@ export interface ScreensProps {
   onMenu?(): void;
   /** Открыть панель управления. Не передан — кнопки «как играть» нет. */
   onHelp?(): void;
+  /**
+   * Рекорд, каким он был ДО этого заезда. В снимке рекорд уже побит (движок
+   * поднимает `best` прямо в кадре), поэтому «новый рекорд» без этой подсказки
+   * можно только угадывать. Не передан — сравниваем со снимком, как раньше.
+   */
+  prevBest?: number;
 }
 
 /* ---------- оформление ---------- */
@@ -445,16 +476,21 @@ function PausedBody({
 
 function OverBody({
   snap,
+  prevBest,
   primaryRef,
   onRestart,
   onMenu,
 }: {
   snap: HudSnapshot;
+  prevBest?: number;
   primaryRef: RefObject<HTMLButtonElement | null>;
   onRestart(): void;
   onMenu?(): void;
 }) {
-  const record = snap.score > 0 && snap.score >= snap.best;
+  /* Рекорд до заезда: страница помнит его до `startRun`, потому что движок
+     поднимает `best` прямо в кадре и к концу заезда он уже равен счёту. */
+  const prior = prevBest ?? snap.best;
+  const record = snap.score > 0 && snap.score >= prior;
   return (
     <>
       <Title text="заезд закончен" size="clamp(26px, 6.6vw, 36px)" />
@@ -469,6 +505,14 @@ function OverBody({
           }}
         >
           новый рекорд
+          {prior > 0 && (
+            <span
+              className="ml-2 text-[11px] font-bold normal-case"
+              style={{ letterSpacing: "0.06em", color: "#8ba3c2", textShadow: GLOW_SOFT }}
+            >
+              было <span className="tnum">{groupNum(prior)}</span>
+            </span>
+          )}
         </p>
       ) : (
         <p className="mt-2 text-[12px]" style={{ color: "#8ba3c2" }}>
@@ -597,14 +641,20 @@ function HelpBody({
 
 /* ---------- сам компонент ---------- */
 
-type ScreenKey = "menu" | "paused" | "over" | "help";
-
 const LABELS: Record<ScreenKey, string> = {
   menu: "Главное меню Starry Ride",
   paused: "Пауза",
   over: "Заезд закончен",
   help: "Управление",
 };
+
+/**
+ * Что вообще может получить фокус. Кнопками список не ограничиваем: стоит
+ * появиться в диалоге ссылке или ползунку — и ловушка тихо перестала бы
+ * замыкаться именно на нём.
+ */
+const FOCUSABLE =
+  'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function Screens({
   snap,
@@ -618,17 +668,9 @@ export function Screens({
   showHelp,
   onMenu,
   onHelp,
+  prevBest,
 }: ScreensProps) {
-  /* Панель управления перекрывает всё: её открывают из меню и из паузы. */
-  const screen: ScreenKey | null = showHelp
-    ? "help"
-    : snap.phase === "menu"
-      ? "menu"
-      : snap.phase === "paused"
-        ? "paused"
-        : snap.phase === "over"
-          ? "over"
-          : null;
+  const screen = overlayScreen(snap.phase, showHelp);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const primaryRef = useRef<HTMLButtonElement>(null);
@@ -677,17 +719,25 @@ export function Screens({
     if (e.key !== "Tab") return;
     const root = dialogRef.current;
     if (root === null) return;
-    const items = root.querySelectorAll<HTMLElement>("button:not([disabled])");
-    if (items.length === 0) return;
+    const items = root.querySelectorAll<HTMLElement>(FOCUSABLE);
+    if (items.length === 0) {
+      // Фокусировать нечего — но и выпускать Tab наружу нельзя.
+      e.preventDefault();
+      root.focus();
+      return;
+    }
     const first = items[0];
     const last = items[items.length - 1];
     const active = document.activeElement;
+    const inside = active instanceof HTMLElement && root.contains(active) && active !== root;
     if (e.shiftKey) {
-      if (active === first || active === root) {
+      // С первого (и с самого диалога) назад — на последний.
+      if (!inside || active === first) {
         e.preventDefault();
         last.focus();
       }
-    } else if (active === last) {
+    } else if (!inside || active === last) {
+      // С последнего (и из ниоткуда) вперёд — на первый. Круг замкнулся.
       e.preventDefault();
       first.focus();
     }
@@ -701,6 +751,8 @@ export function Screens({
 
   if (screen === null) return null;
 
+  const blur = quality === 0 ? undefined : "blur(10px)";
+
   return (
     <motion.div
       key={screen}
@@ -712,8 +764,13 @@ export function Screens({
       style={{
         background:
           "radial-gradient(120% 80% at 50% 30%, rgba(10,26,58,0.72) 0%, rgba(4,8,26,0.90) 60%, rgba(2,4,12,0.95) 100%)",
-        backdropFilter: "blur(14px) saturate(1.15)",
-        WebkitBackdropFilter: "blur(14px) saturate(1.15)",
+        // Размытие подложки — самый дорогой пиксель на экране: оно
+        // пересчитывается поверх живого canvas каждый кадр, во весь экран, и
+        // ровно тогда, когда сцена всё равно рисуется зря (игра стоит). На
+        // «экономно» его нет вовсе — градиент выше и так кроет фон на 90%, а
+        // `saturate` на такой темноте не виден ни в одном из пресетов.
+        backdropFilter: blur,
+        WebkitBackdropFilter: blur,
       }}
     >
       <motion.div
@@ -760,6 +817,7 @@ export function Screens({
         {screen === "over" && (
           <OverBody
             snap={snap}
+            prevBest={prevBest}
             primaryRef={primaryRef}
             onRestart={onRestart}
             onMenu={onMenu}
