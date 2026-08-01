@@ -354,6 +354,10 @@ function frame(now: number): void {
 
   const phaseBefore = g.phase;
   step(g, dt);
+  // Физика идёт строго после движка и до сцены: она читает уже посчитанное
+  // состояние и дописывает к нему поведение кузова. Пока rapier не догрузился
+  // (а он весит больше всей остальной сборки), её просто нет — и это нормально.
+  physics?.update(g, dt);
   audio.current?.update(g, dt);
   // Очередь событий разбирают все желающие в этом же кадре, чистит её владелец.
   if (g.events.length) g.events.length = 0;
@@ -369,6 +373,15 @@ function frame(now: number): void {
   dev?.end();
 }
 raf = requestAnimationFrame(frame);
+
+/* --- физика кузова: приезжает отдельным чанком и подключается на ходу --- */
+
+let physics: import("./game/physics").CarPhysics | null = null;
+void import("./game/physics").then(({ createPhysics }) =>
+  createPhysics().then((p) => {
+    physics = p;
+  }),
+);
 
 /* --- панель настройки: только в разработке --- */
 
@@ -396,6 +409,7 @@ if (import.meta.hot) {
     offTouch();
     for (const o of overlays) o.dispose();
     disposeSystems();
+    physics?.dispose();
     audio.current?.dispose();
     renderer.dispose();
     host.replaceChildren();

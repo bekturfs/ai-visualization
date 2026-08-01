@@ -152,6 +152,11 @@ export function createGame(opts?: {
     roll: 0,
     bob: 0,
 
+    heave: 0,
+    pitchBody: 0,
+    rollBody: 0,
+    skid: 0,
+
     nitro: START_NITRO,
     nitroActive: false,
     lives: LIVES,
@@ -213,6 +218,10 @@ export function startRun(g: Game): void {
   g.yaw = -roadHeading(0) * CAM.headingFollow;
   g.roll = 0;
   g.bob = 0;
+  g.heave = 0;
+  g.pitchBody = 0;
+  g.rollBody = 0;
+  g.skid = 0;
 
   g.nitro = START_NITRO;
   g.nitroActive = false;

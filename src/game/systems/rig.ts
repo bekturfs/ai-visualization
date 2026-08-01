@@ -179,7 +179,9 @@ export function createRig(ctx: RenderCtx): System {
         }
       }
 
-      cam.position.set(ox, CAM.height + oy, 0);
+      // `g.heave` — ход подвески от физики. Без неё поле всегда ноль, и камера
+      // ведёт себя ровно как раньше: модуль физики необязателен по построению.
+      cam.position.set(ox, CAM.height + oy + g.heave, 0);
 
       /* --- 2. ориентация: yaw → pitch → roll --- */
 
@@ -193,7 +195,9 @@ export function createRig(ctx: RenderCtx): System {
       // положительный поворот вокруг +Y уводит взгляд ВЛЕВО, поэтому на правом
       // повороте (roadHeading > 0) он отрицательный. Ещё один минус здесь
       // выбросил бы дорогу из кадра ровно вдвое сильнее, чем поворот.
-      cam.rotation.set(pitch, g.yaw, g.roll, "YXZ");
+      // `g.pitchBody` — клевок кузова от физики (плюс — нос вниз). Он уже
+      // сглажен там же, поэтому здесь просто складывается с тангажом дороги.
+      cam.rotation.set(pitch - g.pitchBody, g.yaw, g.roll + g.rollBody, "YXZ");
 
       /* --- 3. объектив: нитро раскрывает кадр --- */
 
