@@ -1,5 +1,6 @@
 /**
- * Камера и атмосфера. Компонент не рисует ничего видимого, но именно он
+ * Камера и атмосфера. Система не рисует ничего видимого и не возвращает
+ * `object`: она правит `ctx.camera` и `ctx.scene.fog` напрямую. Но именно она
  * определяет ощущение заезда: покачивание кабины, тряска от удара, крен в
  * повороте, раскрытие объектива на нитро и цвет тумана, в котором тонет
  * дальний план.
@@ -13,10 +14,9 @@
  * и всё, что не должно пережить заезд, оттуда сбрасывается по `g.runs`.
  */
 
-import { useEffect, useRef } from "react";
-import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 
+import type { RenderCtx, System } from "../ctx";
 import type { Game } from "../types";
 import { CAM, COLORS, FOG, SKY } from "../config";
 import { roadPitch } from "../road";
@@ -24,7 +24,11 @@ import { clamp01, damp, lerp, smoothstep } from "../num";
 
 /* ---------- настройки, которые нужны только камере ---------- */
 
-/** Ограничение шага времени: после сворачивания вкладки dt приходит огромным. */
+/**
+ * Ограничение шага времени: после сворачивания вкладки dt приходит огромным.
+ * Вызывающий его уже ограничивает, но потолок здесь стоит копейки и не даёт
+ * системе зависеть от чужой дисциплины.
+ */
 const DT_MAX = 0.05;
 
 /** Полный оборот. `g.bob` копится в оборотах, а не в радианах. */
@@ -104,13 +108,29 @@ const FOG_EPS = 0.002;
 const C_FOG_BASE = new THREE.Color(COLORS.night0);
 const C_FOG_TINT = new THREE.Color(COLORS.night2);
 
-interface RigState {
+export function createRig(ctx: RenderCtx): System {
+  const scene = ctx.scene;
+
+  /* --- туман ставится один раз и снимается вместе с системой --- */
+  const fog = new THREE.Fog(0x000000, FOG.near, FOG.far);
+  fog.color.copy(C_FOG_BASE);
+
+  const prevFog = scene.fog;
+  const prevBackground = scene.background;
+  scene.fog = fog;
+  // Купол неба — полная сфера с BackSide, фон из-под неё не виден никогда;
+  // на всякий случай (первый кадр, потеря контекста) за ним стоит clearColor,
+  // который выставляет main.ts тем же COLORS.night0.
+  scene.background = null;
+
+  /* --- состояние системы --- */
+
   /** Сглаженный тангаж камеры, рад. */
-  pitch: number;
+  let pitch = 0;
   /** Текущий подмес night2 в туман. */
-  tint: number;
+  let tint: number = FOG_TINT[0];
   /** Подмес, который уже записан в цвет тумана (−1 — ещё ни разу). */
-  tintApplied: number;
+  let tintApplied = -1;
   /**
    * Номер заезда, под который состояние уже синхронизировано. `−1` — ещё ни
    * разу: первый кадр (и первый кадр каждого нового заезда) ставит тангаж,
@@ -118,126 +138,103 @@ interface RigState {
    * чужого наклона камеры и чужого цвета тумана — состояние прошлого заезда
    * переживало бы `startRun`, хотя не должно.
    */
-  runs: number;
-}
+  let runs = -1;
 
-export function Rig({ g }: { g: Game }) {
-  const scene = useThree((s) => s.scene);
-  const fogRef = useRef<THREE.Fog | null>(null);
-  const st = useRef<RigState>({
-    pitch: 0,
-    tint: FOG_TINT[0],
-    tintApplied: -1,
-    runs: -1,
-  }).current;
+  /** Живой ли ещё туман: после `dispose` кадр не должен его трогать. */
+  let alive = true;
 
-  /* --- туман ставится один раз и снимается вместе с компонентом --- */
-  useEffect(() => {
-    const fog = new THREE.Fog(0x000000, FOG.near, FOG.far);
-    fog.color.copy(C_FOG_BASE);
+  return {
+    update(g: Game, rawDt: number, c: RenderCtx) {
+      // Вкладка была в фоне — dt приходит огромным; кадронезависимость от этого
+      // не спасает, спасает потолок.
+      const dt = rawDt > DT_MAX ? DT_MAX : rawDt;
+      const cam = c.camera;
+      const calm = g.reducedMotion;
+      // Новый заезд (или первый кадр): сглаживать не от чего, ставим сразу.
+      const fresh = runs !== g.runs;
+      runs = g.runs;
 
-    const prevFog = scene.fog;
-    const prevBackground = scene.background;
-    scene.fog = fog;
-    // Купол неба — полная сфера с BackSide, фон из-под неё не виден никогда;
-    // на всякий случай (первый кадр, потеря контекста) за ним стоит clearColor,
-    // который выставляет Ride.tsx тем же COLORS.night0.
-    scene.background = null;
-    fogRef.current = fog;
-    st.tintApplied = -1;
-    st.runs = -1;
+      /* --- 1. положение: покачивание кабины и тряска --- */
 
-    return () => {
+      // `g.bob` — сырая накопленная фаза в ОБОРОТАХ: движок копит
+      // `speed × CAM.bobRate × dt`, а `bobRate` задан в герцах на м/с. Значит
+      // масштабировать в радианы обязан потребитель, то есть мы. Без 2π качка шла
+      // бы вшестеро медленнее заявленной частоты — не дрожь кабины, а зыбь.
+      // В спокойном режиме её нет вовсе: 3…7 Гц у самых глаз — это та же тряска,
+      // которую `reducedMotion` и обязан убирать.
+      let ox = 0;
+      let oy = 0;
+      if (!calm) {
+        const bob = Math.sin(g.bob * TAU) * CAM.bobAmp;
+        ox = bob * 0.5;
+        oy = bob;
+
+        if (g.shake > 0) {
+          // Квадрат — чтобы удар был резким на входе и тихо сходил на нет.
+          const amp = g.shake * g.shake * CAM.shakeAmp;
+          const t = g.t;
+          // Веса дают в сумме единицу: размах не выходит за CAM.shakeAmp.
+          ox += (Math.sin(t * SHAKE_FX0) * 0.62 + Math.sin(t * SHAKE_FX1 + 2.1) * 0.38) * amp;
+          oy += (Math.sin(t * SHAKE_FY0 + 0.9) * 0.58 + Math.sin(t * SHAKE_FY1 + 4.2) * 0.42) * amp;
+        }
+      }
+
+      cam.position.set(ox, CAM.height + oy, 0);
+
+      /* --- 2. ориентация: yaw → pitch → roll --- */
+
+      const pitchTo = roadPitch(g.s) * PITCH_FOLLOW + PITCH_BIAS;
+      pitch = fresh ? pitchTo : damp(pitch, pitchTo, PITCH_RATE, dt);
+      // Порядок YXZ обязателен: крен применяется последним, вокруг уже
+      // повёрнутой оси взгляда, и не утаскивает курс вбок. При XYZ поворот на
+      // курс начал бы подмешиваться в тангаж, и горизонт «поплыл» бы в поворотах.
+      //
+      // `g.yaw` берём как есть: движок уже отдаёт его в соглашении three —
+      // положительный поворот вокруг +Y уводит взгляд ВЛЕВО, поэтому на правом
+      // повороте (roadHeading > 0) он отрицательный. Ещё один минус здесь
+      // выбросил бы дорогу из кадра ровно вдвое сильнее, чем поворот.
+      cam.rotation.set(pitch, g.yaw, g.roll, "YXZ");
+
+      /* --- 3. объектив: нитро раскрывает кадр --- */
+
+      // Проверка «это перспективная камера» больше не нужна: `RenderCtx.camera`
+      // и есть PerspectiveCamera. А вот сравнение с текущим FOV нужно —
+      // `updateProjectionMatrix` не бесплатен.
+      {
+        // На спокойном режиме сюрприз в 14° — слишком резкое движение, отдаём половину.
+        const wide = calm ? (CAM.fov + CAM.fovNitro) * 0.5 : CAM.fovNitro;
+        const to = g.nitroActive ? wide : CAM.fov;
+        let fov = fresh ? to : damp(cam.fov, to, FOV_RATE, dt);
+        if (Math.abs(fov - to) < FOV_SNAP) fov = to;
+        if (Math.abs(fov - cam.fov) > FOV_EPS) {
+          cam.fov = fov;
+          cam.updateProjectionMatrix();
+        }
+      }
+
+      /* --- 4. туман: та же глава, что и у неба --- */
+
+      if (alive) {
+        const n = FOG_TINT.length;
+        const ch = ((g.chapter % n) + n) % n;
+        const nx = (ch + 1) % n;
+        // Тот же кроссфейд, что в Sky: последняя доля SKY.fade подмешивает следующую.
+        const f = SKY.fade > 0 ? smoothstep(1 - SKY.fade, 1, clamp01(g.chapterT)) : 0;
+        const tintTo = lerp(FOG_TINT[ch], FOG_TINT[nx], f);
+        tint = fresh ? tintTo : damp(tint, tintTo, FOG_RATE, dt);
+        if (Math.abs(tint - tintApplied) > FOG_EPS) {
+          tintApplied = tint;
+          fog.color.copy(C_FOG_BASE).lerp(C_FOG_TINT, tint);
+        }
+      }
+    },
+
+    dispose() {
       // THREE.Fog не держит ресурсов GPU, освобождать нечего — только вернуть
       // сцене то, что было до нас.
+      alive = false;
       if (scene.fog === fog) scene.fog = prevFog;
       scene.background = prevBackground;
-      fogRef.current = null;
-    };
-  }, [scene, st]);
-
-  useFrame((state, rawDt) => {
-    // Вкладка была в фоне — dt приходит огромным; кадронезависимость от этого
-    // не спасает, спасает потолок.
-    const dt = rawDt > DT_MAX ? DT_MAX : rawDt;
-    const cam = state.camera;
-    const calm = g.reducedMotion;
-    // Новый заезд (или первый кадр): сглаживать не от чего, ставим сразу.
-    const fresh = st.runs !== g.runs;
-    st.runs = g.runs;
-
-    /* --- 1. положение: покачивание кабины и тряска --- */
-
-    // `g.bob` — сырая накопленная фаза в ОБОРОТАХ: движок копит
-    // `speed × CAM.bobRate × dt`, а `bobRate` задан в герцах на м/с. Значит
-    // масштабировать в радианы обязан потребитель, то есть мы. Без 2π качка шла
-    // бы вшестеро медленнее заявленной частоты — не дрожь кабины, а зыбь.
-    // В спокойном режиме её нет вовсе: 3…7 Гц у самых глаз — это та же тряска,
-    // которую `reducedMotion` и обязан убирать.
-    let ox = 0;
-    let oy = 0;
-    if (!calm) {
-      const bob = Math.sin(g.bob * TAU) * CAM.bobAmp;
-      ox = bob * 0.5;
-      oy = bob;
-
-      if (g.shake > 0) {
-        // Квадрат — чтобы удар был резким на входе и тихо сходил на нет.
-        const amp = g.shake * g.shake * CAM.shakeAmp;
-        const t = g.t;
-        // Веса дают в сумме единицу: размах не выходит за CAM.shakeAmp.
-        ox += (Math.sin(t * SHAKE_FX0) * 0.62 + Math.sin(t * SHAKE_FX1 + 2.1) * 0.38) * amp;
-        oy += (Math.sin(t * SHAKE_FY0 + 0.9) * 0.58 + Math.sin(t * SHAKE_FY1 + 4.2) * 0.42) * amp;
-      }
-    }
-
-    cam.position.set(ox, CAM.height + oy, 0);
-
-    /* --- 2. ориентация: yaw → pitch → roll --- */
-
-    const pitchTo = roadPitch(g.s) * PITCH_FOLLOW + PITCH_BIAS;
-    st.pitch = fresh ? pitchTo : damp(st.pitch, pitchTo, PITCH_RATE, dt);
-    // Порядок YXZ обязателен: крен применяется последним, вокруг уже
-    // повёрнутой оси взгляда, и не утаскивает курс вбок. При XYZ поворот на
-    // курс начал бы подмешиваться в тангаж, и горизонт «поплыл» бы в поворотах.
-    //
-    // `g.yaw` берём как есть: движок уже отдаёт его в соглашении three —
-    // положительный поворот вокруг +Y уводит взгляд ВЛЕВО, поэтому на правом
-    // повороте (roadHeading > 0) он отрицательный. Ещё один минус здесь
-    // выбросил бы дорогу из кадра ровно вдвое сильнее, чем поворот.
-    cam.rotation.set(st.pitch, g.yaw, g.roll, "YXZ");
-
-    /* --- 3. объектив: нитро раскрывает кадр --- */
-
-    if (cam instanceof THREE.PerspectiveCamera) {
-      // На спокойном режиме сюрприз в 14° — слишком резкое движение, отдаём половину.
-      const wide = calm ? (CAM.fov + CAM.fovNitro) * 0.5 : CAM.fovNitro;
-      const to = g.nitroActive ? wide : CAM.fov;
-      let fov = fresh ? to : damp(cam.fov, to, FOV_RATE, dt);
-      if (Math.abs(fov - to) < FOV_SNAP) fov = to;
-      if (Math.abs(fov - cam.fov) > FOV_EPS) {
-        cam.fov = fov;
-        cam.updateProjectionMatrix();
-      }
-    }
-
-    /* --- 4. туман: та же глава, что и у неба --- */
-
-    const fog = fogRef.current;
-    if (fog) {
-      const n = FOG_TINT.length;
-      const ch = ((g.chapter % n) + n) % n;
-      const nx = (ch + 1) % n;
-      // Тот же кроссфейд, что в Sky: последняя доля SKY.fade подмешивает следующую.
-      const f = SKY.fade > 0 ? smoothstep(1 - SKY.fade, 1, clamp01(g.chapterT)) : 0;
-      const tintTo = lerp(FOG_TINT[ch], FOG_TINT[nx], f);
-      st.tint = fresh ? tintTo : damp(st.tint, tintTo, FOG_RATE, dt);
-      if (Math.abs(st.tint - st.tintApplied) > FOG_EPS) {
-        st.tintApplied = st.tint;
-        fog.color.copy(C_FOG_BASE).lerp(C_FOG_TINT, st.tint);
-      }
-    }
-  });
-
-  return null;
+    },
+  };
 }

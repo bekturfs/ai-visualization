@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 /**
  * «Starry Ride» — точка входа и цикл кадра.
  *
@@ -209,6 +210,12 @@ const screens = createScreens(ui, {
     showHelp = false;
     pushSnap();
   },
+  // Геттеры, а не копии: оверлей спрашивает состояние в момент отрисовки. Копия
+  // однажды уже разъехалась с игрой — меню подсвечивало одно качество, а сцена
+  // рисовала другое.
+  quality: () => g.quality,
+  showHelp: () => showHelp,
+  prevBest: () => prevBest,
 });
 
 const overlays = [dashboard, hud, screens];
@@ -293,7 +300,6 @@ function pushSnap(): void {
     writeStore(STORE.best, String(commitBest(g)));
     snap = snapshot(g);
   }
-  screens.setState({ quality: g.quality, showHelp, prevBest });
   for (const o of overlays) o.sync(snap);
 
   // Пока открыт диалог, всё под ним недоступно ни мышью, ни с клавиатуры.

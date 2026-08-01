@@ -46,18 +46,66 @@
  *     ядро уходит в пересвет и белеет — как в референсе, где у полосы белое
  *     сердце в насыщенном голубом ореоле.
  *
+ * ## Почему ленты НЕ переехали на `meshline`
+ *
+ * Переезд был задан как часть порта, и он был проверен, а не отклонён с ходу:
+ * прочитан шейдер `meshline@3.3.1`, посчитана его арифметика ширины и измерено
+ * поведение `setPoints`. Три замера против, и все три — не вкусовые.
+ *
+ *   1. **`setPoints` нельзя звать в кадре.** «Переиспользует буфер, если длина
+ *      не изменилась» верно только про объект `BufferAttribute`: сами данные
+ *      пересобираются с нуля. Повторный вызов той же длины (11 точек) — семь
+ *      новых типизированных массивов (1264 Б), восемь обычных массивов, набитых
+ *      через `push`, плюс `computeBoundingSphere` и `computeBoundingBox`. На 24
+ *      лентах при 60 кадрах это 10080 массивов и 1.7 МБ мусора в секунду —
+ *      против правила «ноль аллокаций в `update`». Обойти можно, только вписывая
+ *      `attributes.position/previous/next` мимо API, то есть взяв от meshline
+ *      один вершинный шейдер.
+ *
+ *   2. **Цвет у `MeshLineMaterial` — юниформа, а не атрибут.** Ни вершинных
+ *      цветов, ни инстансинга: цвет и яркость ленты живут в материале. А у нас
+ *      они свои у каждой ленты (синий/красный × яркость от относительной
+ *      скорости и дистанции). Значит — свой материал и свой вызов отрисовки на
+ *      ленту: с одного до 56 в пределе, 14–24 в типичном кадре. Кадр и так
+ *      признан тяжёлым (`PROGRESS.md`, пункт 1 недоделанного), и плотность
+ *      трафика по ходу заезда только растёт.
+ *
+ *   3. **Ширина у meshline анизотропна по соотношению сторон.** В шейдере
+ *      `finalPosition` домножен на `aspect` целиком, а делится на `resolution`
+ *      покомпонентно, и горизонтальная линия выходит в `1/aspect` раз толще
+ *      вертикальной. Замер при `lineWidth = 1`: портрет 390×844 — 0.815 px
+ *      против 0.377 px (×2.16), десктоп 1920×1080 — 0.212 px против 0.377 px
+ *      (×0.56). Наши полосы почти горизонтальны, то есть одна и та же константа
+ *      дала бы в портрете полосы в 3.8 раза толще, чем на десктопе. Снаружи
+ *      шейдера это не лечится.
+ *
+ * И четвёртое, уже про сам образ: постоянной экранной ширины у полос в рилe
+ * нет. На f_005 и f_007 каждая полоса заметно сужается к точке схода — она
+ * держит не толщину, а ЯРКОСТЬ, и держит её за счёт аддитивного ядра, которое
+ * у нас уже есть. Плоская экранная лента вдобавок стоила бы дуги сечения и
+ * профиля «узкое ядро — широкая юбка» (у meshline поперёк ленты цвет
+ * постоянный), а дуга — это ровно та правка, которой ленты вообще стали видны
+ * с высоты глаз водителя.
+ *
+ * Итог: инстансные квады остаются как были, до константы. Что честно теряется —
+ * непрерывная полилиния вместо цепочки сегментов; но сегменты стыкуются без
+ * ступеньки по построению (см. `buildTrailGeom`), так что шва там и нет.
+ * Ширина не зависит от размера холста, поэтому `resize` системе не нужен.
+ *
  * Модуль ничего не мутирует в `g` и не считает столкновения — это дело
  * `engine.ts`. Аллокаций в кадре нет: матрицы, векторы и цвета подняты в
  * модульный скретч, пулы фиксированы под пресет качества, а неиспользованные
  * слоты не прячутся нулевым масштабом, а просто отсекаются `mesh.count` —
  * их не касается ни вершинный шейдер, ни растеризатор.
+ *
+ * Размер пулов берётся из пресета **на сборке** (`QUALITY[ctx.quality]`). Смена
+ * качества — это пересборка системы в `main.ts`, а не изменение пулов на ходу.
  */
 
-import { useEffect, useRef } from "react";
-import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
-import type { Game, Quality } from "../types";
+import type { RenderCtx, System } from "../ctx";
+import type { Quality } from "../types";
 import { BOX, COLORS, FOG, LIMITS, PHYS, QUALITY } from "../config";
 import { roadHeading, roadPitch, roadX, roadY } from "../road";
 import { clamp, clamp01, damp, smoothstep } from "../num";
@@ -218,10 +266,10 @@ function radialTex(
   wide: number,
   wideK: number,
 ): THREE.CanvasTexture | null {
-  const ctx = ctx2d(size);
-  if (!ctx) return null;
-  const w = ctx.canvas.width;
-  const img = ctx.createImageData(w, w);
+  const c2d = ctx2d(size);
+  if (!c2d) return null;
+  const w = c2d.canvas.width;
+  const img = c2d.createImageData(w, w);
   const d = img.data;
   const c = (w - 1) / 2;
   for (let y = 0; y < w; y++) {
@@ -240,8 +288,8 @@ function radialTex(
       d[i + 3] = Math.round(a * 255);
     }
   }
-  ctx.putImageData(img, 0, 0);
-  const tex = new THREE.CanvasTexture(ctx.canvas);
+  c2d.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c2d.canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = THREE.ClampToEdgeWrapping;
   tex.wrapT = THREE.ClampToEdgeWrapping;
@@ -554,296 +602,269 @@ function buildTraffic(q: Quality): TrafficWorld {
   };
 }
 
-/* ---------- компонент ---------- */
+/* ---------- система ---------- */
 
-interface Anim {
+/**
+ * Кузова, огни и световые ленты трафика. Читает `g.cars` и больше ничего:
+ * ни зависимостей от других систем, ни мутаций состояния.
+ */
+export function createTraffic(ctx: RenderCtx): System {
+  const res = buildTraffic(ctx.quality);
+
   /** Сглаженная скорость игрока: длина лент не должна дёргаться на ударах. */
-  speed: number;
+  let animSpeed: number = PHYS.speedStart;
   /** Номер заезда, на котором сглаживание в последний раз сбрасывали. */
-  runs: number;
-}
+  let animRuns = -1;
 
-export function Traffic({ g }: { g: Game }) {
-  const quality = g.quality;
+  return {
+    object: res.group,
 
-  // Ресурсы живут в ref, а не в useMemo: в StrictMode фабрика useMemo успела бы
-  // построить два комплекта, из которых один утёк бы мимо cleanup.
-  const holder = useRef<{ q: Quality; res: TrafficWorld } | null>(null);
-  if (holder.current === null) {
-    holder.current = { q: quality, res: buildTraffic(quality) };
-  } else if (holder.current.q !== quality) {
-    holder.current.res.dispose();
-    holder.current = { q: quality, res: buildTraffic(quality) };
-  }
-  const res = holder.current.res;
+    update(g, rawDt) {
+      const dt = rawDt > 0.05 ? 0.05 : rawDt;
 
-  const animRef = useRef<Anim | null>(null);
-  if (animRef.current === null) animRef.current = { speed: PHYS.speedStart, runs: -1 };
-
-  // Освобождение отложено на тик: StrictMode размонтирует компонент и тут же
-  // монтирует обратно, и настоящий unmount от этой репетиции надо отличать.
-  const killRef = useRef(0);
-  useEffect(() => {
-    if (killRef.current) {
-      clearTimeout(killRef.current);
-      killRef.current = 0;
-    }
-    return () => {
-      const h = holder.current;
-      if (!h) return;
-      killRef.current = window.setTimeout(() => {
-        killRef.current = 0;
-        if (holder.current === h) {
-          h.res.dispose();
-          holder.current = null;
-        }
-      }, 0);
-    };
-  }, []);
-
-  useFrame((_state, rawDt) => {
-    const dt = rawDt > 0.05 ? 0.05 : rawDt;
-    const anim = animRef.current;
-    if (!anim) return;
-
-    // Рестарт обнуляет скорость мгновенно, а сглаживание тянулось бы с прошлого
-    // заезда — первые доли секунды нового старта шли бы с чужими длинами лент.
-    if (anim.runs !== g.runs) {
-      anim.runs = g.runs;
-      anim.speed = g.speed;
-    } else {
-      anim.speed = damp(anim.speed, g.speed, 5, dt);
-    }
-
-    const camS = g.s;
-    const camX = g.x;
-    // Форма дороги под камерой — общий вычет всех проекций (`localX`/`localY`
-    // из road.ts считают её заново на каждый вызов, а вызовов тут сотни).
-    const camRX = roadX(camS);
-    const camRY = roadY(camS);
-    const calm = g.reducedMotion;
-    const far = res.carFar;
-    const spd = anim.speed;
-    const cars = g.cars;
-    const segMax = res.segMax;
-    const trails = res.trails;
-    const trailFar = far * TRAIL_FAR;
-    const trailFull = far * TRAIL_FULL;
-
-    let nBody = 0;
-    let nTailCore = 0;
-    let nTailHalo = 0;
-    let nHeadCore = 0;
-    let nHeadHalo = 0;
-    let nTrail = 0;
-
-    for (let i = 0; i < cars.length; i++) {
-      const c = cars[i];
-      if (!c.active) continue;
-      const d = c.s - camS;
-      if (d > far || d < -CAR_BEHIND) continue;
-
-      const box = BOX.cars[c.kind];
-      const hw = box.hw;
-      const hl = box.hl;
-      const lane = c.lane + (calm ? 0 : Math.sin(c.wobble) * SWAY);
-      const onc = c.oncoming || c.speed < 0;
-
-      /* --- кузов --- */
-      if (d < BODY_FAR && d > -BODY_BEHIND && nBody < res.cap) {
-        _eu.set(roadPitch(c.s), -roadHeading(c.s), 0, "YXZ");
-        _q.setFromEuler(_eu);
-        _pos.set(roadX(c.s) - camRX + lane - camX, roadY(c.s) - camRY, camS - c.s);
-        _scl.set(hw * 2, CAR_H[c.kind], hl * 2);
-        _m4.compose(_pos, _q, _scl);
-        res.bodies.setMatrixAt(nBody, _m4);
-        // Нижний порог, а не ноль: дальний кузов должен сохранить синий кант,
-        // иначе на подъезде к границе он схлопывается в чёрное пятно.
-        const bf = 0.18 + 0.82 * smoothstep(BODY_FAR, BODY_FAR * 0.3, d);
-        _col.setRGB(bf, bf, bf);
-        res.bodies.setColorAt(nBody, _col);
-        nBody++;
+      // Рестарт обнуляет скорость мгновенно, а сглаживание тянулось бы с прошлого
+      // заезда — первые доли секунды нового старта шли бы с чужими длинами лент.
+      if (animRuns !== g.runs) {
+        animRuns = g.runs;
+        animSpeed = g.speed;
+      } else {
+        animSpeed = damp(animSpeed, g.speed, 5, dt);
       }
 
-      /* --- огни ---
-         И стопы ведущей, и фары встречной сидят на той стороне кузова, что
-         обращена к игроку, то есть на меньшем `s`: встречная едет к нам носом,
-         ведущая — от нас кормой. */
-      const lampS = c.s - hl;
-      const lampRX = roadX(lampS) - camRX - camX;
-      const lampY = LAMP_Y[c.kind];
-      const lx = hw * LAMP_X;
-      const ly = roadY(lampS) - camRY + lampY;
-      const lz = camS - lampS;
-      const grow = d > 0 ? Math.min(1 + d / LIGHT_GROW, LIGHT_GROW_MAX) : 1;
-      // Спад начинается поздно (0.72 от дальности): скопление огней у точки
-      // схода — половина образа референса, гасить его рано нельзя.
-      const lit = smoothstep(far, far * 0.72, d) * smoothstep(-12, 2, d);
+      const camS = g.s;
+      const camX = g.x;
+      // Форма дороги под камерой — общий вычет всех проекций (`localX`/`localY`
+      // из road.ts считают её заново на каждый вызов, а вызовов тут сотни).
+      const camRX = roadX(camS);
+      const camRY = roadY(camS);
+      const calm = g.reducedMotion;
+      const far = res.carFar;
+      const spd = animSpeed;
+      const cars = g.cars;
+      const segMax = res.segMax;
+      const trails = res.trails;
+      const trailFar = far * TRAIL_FAR;
+      const trailFull = far * TRAIL_FULL;
 
-      if (lit > 0.002) {
-        // Сигнала торможения в контракте нет, поэтому стопы просто дышат по
-        // фазе покачивания — этого хватает, чтобы они не выглядели наклейками.
-        const shimmer = calm ? 1 : 0.84 + 0.16 * Math.sin(c.wobble * 1.7 + c.id * 0.7);
-        const flick = calm ? 1 : 0.95 + 0.05 * Math.sin(c.wobble * 1.1 + c.id);
+      let nBody = 0;
+      let nTailCore = 0;
+      let nTailHalo = 0;
+      let nHeadCore = 0;
+      let nHeadHalo = 0;
+      let nTrail = 0;
 
-        const coreSize = (onc ? HEAD_CORE : TAIL_CORE) * grow;
-        const coreGain =
-          (onc ? HEAD_CORE_GAIN * flick : TAIL_CORE_GAIN * shimmer) * lit;
-        const coreMesh = onc ? res.headCore : res.tailCore;
-        let coreN = onc ? nHeadCore : nTailCore;
-        _col.setRGB(coreGain, coreGain, coreGain);
-        for (let side = -1; side <= 1; side += 2) {
-          if (coreN >= res.lampCap) break;
-          _pos.set(lampRX + lane + side * lx, ly, lz);
-          _scl.set(coreSize, coreSize, 1);
-          _m4.compose(_pos, _qi, _scl);
-          coreMesh.setMatrixAt(coreN, _m4);
-          coreMesh.setColorAt(coreN, _col);
-          coreN++;
+      for (let i = 0; i < cars.length; i++) {
+        const c = cars[i];
+        if (!c.active) continue;
+        const d = c.s - camS;
+        if (d > far || d < -CAR_BEHIND) continue;
+
+        const box = BOX.cars[c.kind];
+        const hw = box.hw;
+        const hl = box.hl;
+        const lane = c.lane + (calm ? 0 : Math.sin(c.wobble) * SWAY);
+        const onc = c.oncoming || c.speed < 0;
+
+        /* --- кузов --- */
+        if (d < BODY_FAR && d > -BODY_BEHIND && nBody < res.cap) {
+          _eu.set(roadPitch(c.s), -roadHeading(c.s), 0, "YXZ");
+          _q.setFromEuler(_eu);
+          _pos.set(roadX(c.s) - camRX + lane - camX, roadY(c.s) - camRY, camS - c.s);
+          _scl.set(hw * 2, CAR_H[c.kind], hl * 2);
+          _m4.compose(_pos, _q, _scl);
+          res.bodies.setMatrixAt(nBody, _m4);
+          // Нижний порог, а не ноль: дальний кузов должен сохранить синий кант,
+          // иначе на подъезде к границе он схлопывается в чёрное пятно.
+          const bf = 0.18 + 0.82 * smoothstep(BODY_FAR, BODY_FAR * 0.3, d);
+          _col.setRGB(bf, bf, bf);
+          res.bodies.setColorAt(nBody, _col);
+          nBody++;
         }
-        if (onc) nHeadCore = coreN;
-        else nTailCore = coreN;
 
-        // Вблизи ореол сжимается: его работа — сделать читаемым ДАЛЬНИЙ огонь,
-        // а в двух десятках метров всё держат ядра, и полноразмерный ореол там
-        // только заливает половину полосы диском и жжёт филрейт.
-        const haloSize =
-          (onc ? HEAD_HALO : TAIL_HALO) *
-          grow *
-          (0.62 + hw * 0.42) *
-          (0.45 + 0.55 * smoothstep(6, 45, d));
-        const haloGain =
-          (onc ? HEAD_HALO_GAIN * flick : TAIL_HALO_GAIN * shimmer) * lit;
-        const haloMesh = onc ? res.headHalo : res.tailHalo;
-        const haloN = onc ? nHeadHalo : nTailHalo;
-        if (haloN < res.cap) {
-          _pos.set(lampRX + lane, ly, lz);
-          _scl.set(haloSize * 1.2, haloSize, 1);
-          _m4.compose(_pos, _qi, _scl);
-          haloMesh.setMatrixAt(haloN, _m4);
-          _col.setRGB(haloGain, haloGain, haloGain);
-          haloMesh.setColorAt(haloN, _col);
-          if (onc) nHeadHalo = haloN + 1;
-          else nTailHalo = haloN + 1;
+        /* --- огни ---
+           И стопы ведущей, и фары встречной сидят на той стороне кузова, что
+           обращена к игроку, то есть на меньшем `s`: встречная едет к нам носом,
+           ведущая — от нас кормой. */
+        const lampS = c.s - hl;
+        const lampRX = roadX(lampS) - camRX - camX;
+        const lampY = LAMP_Y[c.kind];
+        const lx = hw * LAMP_X;
+        const ly = roadY(lampS) - camRY + lampY;
+        const lz = camS - lampS;
+        const grow = d > 0 ? Math.min(1 + d / LIGHT_GROW, LIGHT_GROW_MAX) : 1;
+        // Спад начинается поздно (0.72 от дальности): скопление огней у точки
+        // схода — половина образа референса, гасить его рано нельзя.
+        const lit = smoothstep(far, far * 0.72, d) * smoothstep(-12, 2, d);
+
+        if (lit > 0.002) {
+          // Сигнала торможения в контракте нет, поэтому стопы просто дышат по
+          // фазе покачивания — этого хватает, чтобы они не выглядели наклейками.
+          const shimmer = calm ? 1 : 0.84 + 0.16 * Math.sin(c.wobble * 1.7 + c.id * 0.7);
+          const flick = calm ? 1 : 0.95 + 0.05 * Math.sin(c.wobble * 1.1 + c.id);
+
+          const coreSize = (onc ? HEAD_CORE : TAIL_CORE) * grow;
+          const coreGain =
+            (onc ? HEAD_CORE_GAIN * flick : TAIL_CORE_GAIN * shimmer) * lit;
+          const coreMesh = onc ? res.headCore : res.tailCore;
+          let coreN = onc ? nHeadCore : nTailCore;
+          _col.setRGB(coreGain, coreGain, coreGain);
+          for (let side = -1; side <= 1; side += 2) {
+            if (coreN >= res.lampCap) break;
+            _pos.set(lampRX + lane + side * lx, ly, lz);
+            _scl.set(coreSize, coreSize, 1);
+            _m4.compose(_pos, _qi, _scl);
+            coreMesh.setMatrixAt(coreN, _m4);
+            coreMesh.setColorAt(coreN, _col);
+            coreN++;
+          }
+          if (onc) nHeadCore = coreN;
+          else nTailCore = coreN;
+
+          // Вблизи ореол сжимается: его работа — сделать читаемым ДАЛЬНИЙ огонь,
+          // а в двух десятках метров всё держат ядра, и полноразмерный ореол там
+          // только заливает половину полосы диском и жжёт филрейт.
+          const haloSize =
+            (onc ? HEAD_HALO : TAIL_HALO) *
+            grow *
+            (0.62 + hw * 0.42) *
+            (0.45 + 0.55 * smoothstep(6, 45, d));
+          const haloGain =
+            (onc ? HEAD_HALO_GAIN * flick : TAIL_HALO_GAIN * shimmer) * lit;
+          const haloMesh = onc ? res.headHalo : res.tailHalo;
+          const haloN = onc ? nHeadHalo : nTailHalo;
+          if (haloN < res.cap) {
+            _pos.set(lampRX + lane, ly, lz);
+            _scl.set(haloSize * 1.2, haloSize, 1);
+            _m4.compose(_pos, _qi, _scl);
+            haloMesh.setMatrixAt(haloN, _m4);
+            _col.setRGB(haloGain, haloGain, haloGain);
+            haloMesh.setColorAt(haloN, _col);
+            if (onc) nHeadHalo = haloN + 1;
+            else nTailHalo = haloN + 1;
+          }
         }
-      }
 
-      /* --- световая лента ---
-         Тянется в сторону БОЛЬШЕГО `s` — туда, где фонарь был секунду назад,
-         то есть к точке схода, и начинается чуть впереди машины (см.
-         `TRAIL_LEAD`). Отсчёт от кормы, а не от фонаря: иначе самый яркий,
-         нулевой сегмент прятался бы внутри собственного кузова, который
-         перекрывает его по глубине. */
-      if (trails && d < trailFar) {
-        const rel = onc ? spd + Math.abs(c.speed) : Math.abs(spd - c.speed);
-        const nseg = clamp(
-          Math.round((rel * (onc ? TRAIL_TIME : TRAIL_TIME_RED)) / TRAIL_STEP),
-          TRAIL_SEGS_MIN,
-          segMax,
-        );
-        const bri =
-          (onc ? TRAIL_GAIN : TRAIL_GAIN_RED) *
-          smoothstep(trailFar, trailFull, d) *
-          (0.5 + 0.5 * clamp01(rel / TRAIL_REF));
-        if (bri > 0.004) {
-          const w0 = onc ? TRAIL_W : TRAIL_W_RED;
-          const offX = lx * 0.92;
-          const ty = lampY - TRAIL_ARCH * TRAIL_ARCH_DROP;
-          const s0 =
-            c.s +
-            hl -
-            Math.min(
-              nseg * TRAIL_STEP * (onc ? TRAIL_LEAD : TRAIL_LEAD_RED),
-              TRAIL_LEAD_MAX,
-            );
-          // Обе ленты машины идут по одной кривой с точностью до постоянного
-          // бокового сдвига: разность узлов, а значит и базис сегмента, у них
-          // общая. Считаем узел и базис один раз на сегмент, а не по разу на
-          // ленту, и катим предыдущий узел вперёд вместо повторной проекции.
-          let ax0 = roadX(s0) - camRX - camX;
-          let ay0 = roadY(s0) - camRY + ty;
-          let az0 = camS - s0;
-          for (let k = 0; k < nseg; k++) {
-            if (nTrail + 2 > res.trailCap) break;
-            // За туманом ленты не видно — дальше матриц не считаем вовсе.
-            if (-az0 > FOG.far) break;
-            const sb = s0 + TRAIL_STEP * (k + 1);
-            const ax1 = roadX(sb) - camRX - camX;
-            const ay1 = roadY(sb) - camRY + ty;
-            const az1 = camS - sb;
+        /* --- световая лента ---
+           Тянется в сторону БОЛЬШЕГО `s` — туда, где фонарь был секунду назад,
+           то есть к точке схода, и начинается чуть впереди машины (см.
+           `TRAIL_LEAD`). Отсчёт от кормы, а не от фонаря: иначе самый яркий,
+           нулевой сегмент прятался бы внутри собственного кузова, который
+           перекрывает его по глубине. */
+        if (trails && d < trailFar) {
+          const rel = onc ? spd + Math.abs(c.speed) : Math.abs(spd - c.speed);
+          const nseg = clamp(
+            Math.round((rel * (onc ? TRAIL_TIME : TRAIL_TIME_RED)) / TRAIL_STEP),
+            TRAIL_SEGS_MIN,
+            segMax,
+          );
+          const bri =
+            (onc ? TRAIL_GAIN : TRAIL_GAIN_RED) *
+            smoothstep(trailFar, trailFull, d) *
+            (0.5 + 0.5 * clamp01(rel / TRAIL_REF));
+          if (bri > 0.004) {
+            const w0 = onc ? TRAIL_W : TRAIL_W_RED;
+            const offX = lx * 0.92;
+            const ty = lampY - TRAIL_ARCH * TRAIL_ARCH_DROP;
+            const s0 =
+              c.s +
+              hl -
+              Math.min(
+                nseg * TRAIL_STEP * (onc ? TRAIL_LEAD : TRAIL_LEAD_RED),
+                TRAIL_LEAD_MAX,
+              );
+            // Обе ленты машины идут по одной кривой с точностью до постоянного
+            // бокового сдвига: разность узлов, а значит и базис сегмента, у них
+            // общая. Считаем узел и базис один раз на сегмент, а не по разу на
+            // ленту, и катим предыдущий узел вперёд вместо повторной проекции.
+            let ax0 = roadX(s0) - camRX - camX;
+            let ay0 = roadY(s0) - camRY + ty;
+            let az0 = camS - s0;
+            for (let k = 0; k < nseg; k++) {
+              if (nTrail + 2 > res.trailCap) break;
+              // За туманом ленты не видно — дальше матриц не считаем вовсе.
+              if (-az0 > FOG.far) break;
+              const sb = s0 + TRAIL_STEP * (k + 1);
+              const ax1 = roadX(sb) - camRX - camX;
+              const ay1 = roadY(sb) - camRY + ty;
+              const az1 = camS - sb;
 
-            // Сегмент целиком за спиной (обе точки в +Z) — у только что
-            // разъехавшейся машины таких два-три, и все они ушли бы в клип.
-            // Проверка до базиса: иначе мы платили бы за них матрицей.
-            if (az0 <= 0 || az1 <= 0) {
-              _dir.set(ax1 - ax0, ay1 - ay0, az1 - az0);
-              const segLen = _dir.length();
-              if (segLen < 1e-3) break;
-              _dir.multiplyScalar(1 / segLen);
-              // Базис ленты: X — поперёк, Y — нормаль (валик), Z — против хода,
-              // потому что геометрия уходит в локальный −Z.
-              _right.copy(_dir).cross(_up).normalize();
-              _norm.copy(_right).cross(_dir);
-              const tp = res.taper[k];
-              _ax.copy(_right).multiplyScalar(w0 * tp);
-              _ay.copy(_norm).multiplyScalar(tp);
-              _az.copy(_dir).multiplyScalar(-segLen);
-              _m4.makeBasis(_ax, _ay, _az);
+              // Сегмент целиком за спиной (обе точки в +Z) — у только что
+              // разъехавшейся машины таких два-три, и все они ушли бы в клип.
+              // Проверка до базиса: иначе мы платили бы за них матрицей.
+              if (az0 <= 0 || az1 <= 0) {
+                _dir.set(ax1 - ax0, ay1 - ay0, az1 - az0);
+                const segLen = _dir.length();
+                if (segLen < 1e-3) break;
+                _dir.multiplyScalar(1 / segLen);
+                // Базис ленты: X — поперёк, Y — нормаль (валик), Z — против хода,
+                // потому что геометрия уходит в локальный −Z.
+                _right.copy(_dir).cross(_up).normalize();
+                _norm.copy(_right).cross(_dir);
+                const tp = res.taper[k];
+                _ax.copy(_right).multiplyScalar(w0 * tp);
+                _ay.copy(_norm).multiplyScalar(tp);
+                _az.copy(_dir).multiplyScalar(-segLen);
+                _m4.makeBasis(_ax, _ay, _az);
 
-              _col.copy(onc ? _blue : _red).multiplyScalar(bri * res.fade[k]);
-              for (let side = -1; side <= 1; side += 2) {
-                _m4.setPosition(ax0 + lane + side * offX, ay0, az0);
-                trails.setMatrixAt(nTrail, _m4);
-                trails.setColorAt(nTrail, _col);
-                nTrail++;
+                _col.copy(onc ? _blue : _red).multiplyScalar(bri * res.fade[k]);
+                for (let side = -1; side <= 1; side += 2) {
+                  _m4.setPosition(ax0 + lane + side * offX, ay0, az0);
+                  trails.setMatrixAt(nTrail, _m4);
+                  trails.setColorAt(nTrail, _col);
+                  nTrail++;
+                }
               }
-            }
 
-            ax0 = ax1;
-            ay0 = ay1;
-            az0 = az1;
+              ax0 = ax1;
+              ay0 = ay1;
+              az0 = az1;
+            }
           }
         }
       }
-    }
 
-    /* --- сколько слотов реально занято ---
-       Незанятые не прячем нулевым масштабом: `count` отсекает их до вершинного
-       шейдера, и вырожденные квады не проходят через растеризатор вовсе. */
-    res.bodies.count = nBody;
-    res.tailHalo.count = nTailHalo;
-    res.headHalo.count = nHeadHalo;
-    res.tailCore.count = nTailCore;
-    res.headCore.count = nHeadCore;
-    if (trails) trails.count = nTrail;
+      /* --- сколько слотов реально занято ---
+         Незанятые не прячем нулевым масштабом: `count` отсекает их до вершинного
+         шейдера, и вырожденные квады не проходят через растеризатор вовсе. */
+      res.bodies.count = nBody;
+      res.tailHalo.count = nTailHalo;
+      res.headHalo.count = nHeadHalo;
+      res.tailCore.count = nTailCore;
+      res.headCore.count = nHeadCore;
+      if (trails) trails.count = nTrail;
 
-    if (nBody > 0) {
-      res.bodies.instanceMatrix.needsUpdate = true;
-      if (res.bodies.instanceColor) res.bodies.instanceColor.needsUpdate = true;
-    }
-    if (nTailHalo > 0) {
-      res.tailHalo.instanceMatrix.needsUpdate = true;
-      if (res.tailHalo.instanceColor) res.tailHalo.instanceColor.needsUpdate = true;
-    }
-    if (nHeadHalo > 0) {
-      res.headHalo.instanceMatrix.needsUpdate = true;
-      if (res.headHalo.instanceColor) res.headHalo.instanceColor.needsUpdate = true;
-    }
-    if (nTailCore > 0) {
-      res.tailCore.instanceMatrix.needsUpdate = true;
-      if (res.tailCore.instanceColor) res.tailCore.instanceColor.needsUpdate = true;
-    }
-    if (nHeadCore > 0) {
-      res.headCore.instanceMatrix.needsUpdate = true;
-      if (res.headCore.instanceColor) res.headCore.instanceColor.needsUpdate = true;
-    }
-    if (trails && nTrail > 0) {
-      trails.instanceMatrix.needsUpdate = true;
-      if (trails.instanceColor) trails.instanceColor.needsUpdate = true;
-    }
-  });
+      if (nBody > 0) {
+        res.bodies.instanceMatrix.needsUpdate = true;
+        if (res.bodies.instanceColor) res.bodies.instanceColor.needsUpdate = true;
+      }
+      if (nTailHalo > 0) {
+        res.tailHalo.instanceMatrix.needsUpdate = true;
+        if (res.tailHalo.instanceColor) res.tailHalo.instanceColor.needsUpdate = true;
+      }
+      if (nHeadHalo > 0) {
+        res.headHalo.instanceMatrix.needsUpdate = true;
+        if (res.headHalo.instanceColor) res.headHalo.instanceColor.needsUpdate = true;
+      }
+      if (nTailCore > 0) {
+        res.tailCore.instanceMatrix.needsUpdate = true;
+        if (res.tailCore.instanceColor) res.tailCore.instanceColor.needsUpdate = true;
+      }
+      if (nHeadCore > 0) {
+        res.headCore.instanceMatrix.needsUpdate = true;
+        if (res.headCore.instanceColor) res.headCore.instanceColor.needsUpdate = true;
+      }
+      if (trails && nTrail > 0) {
+        trails.instanceMatrix.needsUpdate = true;
+        if (trails.instanceColor) trails.instanceColor.needsUpdate = true;
+      }
+    },
 
-  // `key` обязателен: при смене пресета качества это другой объект, и без ключа
-  // r3f переиспользовал бы узел, оставив в сцене уже освобождённые ресурсы.
-  return <primitive key={quality} object={res.group} />;
+    dispose() {
+      // Родителя снимает `main.ts`; наше дело — GPU-ресурсы. Их тут ровно
+      // столько, сколько создал `buildTraffic`: пять-шесть InstancedMesh,
+      // шесть материалов, три-четыре геометрии и две текстуры.
+      res.group.clear();
+      res.dispose();
+    },
+  };
 }

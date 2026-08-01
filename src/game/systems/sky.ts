@@ -21,14 +21,14 @@
  * посреди кроссфейда не дают скачка.
  *
  * Все текстуры рисуются в canvas прямо здесь: ни одного файла, ни одной сетевой
- * загрузки. Всё созданное освобождается при размонтировании.
+ * загрузки. Всё созданное освобождается в `dispose`: после ухода React никто
+ * больше не чистит геометрии и материалы за нас.
  */
 
-import { useEffect, useRef } from "react";
-import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
 import { COLORS, PHYS, QUALITY, SKY } from "../config";
+import type { RenderCtx, System } from "../ctx";
 import { clamp01, damp, lerp, smoothstep } from "../num";
 import { hash2, range } from "../rng";
 import type { Game, Quality } from "../types";
@@ -929,6 +929,7 @@ function buildSky(q: Quality): SkyRes {
     textures.length = 0;
     geometries.length = 0;
     materials.length = 0;
+    root.removeFromParent();
     root.clear();
   };
 
@@ -973,67 +974,55 @@ interface SkyAnim {
   glow: number;
   /** `g.s` предыдущего кадра: прыжок назад = рестарт заезда. */
   lastS: number;
-  /** Первый кадр после монтирования — цели ставим сразу, без наплыва. */
+  /** Первый кадр после создания — цели ставим сразу, без наплыва. */
   fresh: boolean;
 }
 
-/* ---------- компонент ---------- */
+/* ---------- система ---------- */
 
-export function Sky({ g }: { g: Game }) {
-  const quality = g.quality;
+/**
+ * Небо целиком. Ничего не просит у вызывающего сверх `RenderCtx`: размер и dpr
+ * читаются из `ctx` в кадре, всё остальное — из `Game`.
+ *
+ * Смена качества обрабатывается здесь же, как это раньше делал компонент:
+ * ресурсы пересобираются под новый пресет и подвешиваются в тот же корневой
+ * объект, чтобы `main.ts` не пришлось ничего переприсоединять к сцене.
+ */
+export function createSky(ctx: RenderCtx): System {
+  // Внешний корень живёт столько же, сколько система: `main.ts` добавляет его в
+  // сцену один раз. Пересборка по качеству меняет только его содержимое.
+  // renderOrder обязателен и здесь: вложенная группа иначе сбросит groupOrder.
+  const root = new THREE.Group();
+  root.name = "sky-root";
+  root.frustumCulled = false;
+  root.renderOrder = GROUP_ORDER;
 
-  // Ресурсы живут в ref, а не в useMemo: StrictMode дважды вызывает рендер, и
-  // фабрика useMemo успела бы построить две туманности, из которых одна утекла бы.
-  const holder = useRef<{ q: Quality; res: SkyRes } | null>(null);
-  if (holder.current === null) {
-    holder.current = { q: quality, res: buildSky(quality) };
-  } else if (holder.current.q !== quality) {
-    holder.current.res.dispose();
-    holder.current = { q: quality, res: buildSky(quality) };
-  }
-  const res = holder.current.res;
+  let quality: Quality = ctx.quality;
+  let res = buildSky(quality);
+  root.add(res.root);
 
-  const animRef = useRef<SkyAnim | null>(null);
-  if (animRef.current === null) {
-    animRef.current = {
-      t: 0,
-      wStars: 1,
-      wNebula: 0,
-      wTrail: 0,
-      wMeteor: 1,
-      wFlare: 1,
-      spin: 0,
-      glow: 0.05,
-      lastS: 0,
-      fresh: true,
-    };
-  }
+  const anim: SkyAnim = {
+    t: 0,
+    wStars: 1,
+    wNebula: 0,
+    wTrail: 0,
+    wMeteor: 1,
+    wFlare: 1,
+    spin: 0,
+    glow: 0.05,
+    lastS: 0,
+    fresh: true,
+  };
 
-  // Освобождение отложено на тик: StrictMode размонтирует и тут же монтирует
-  // компонент обратно, и настоящий unmount от этой репетиции надо отличать.
-  const killRef = useRef(0);
-  useEffect(() => {
-    if (killRef.current) {
-      clearTimeout(killRef.current);
-      killRef.current = 0;
+  function update(g: Game, rawDt: number, c: RenderCtx): void {
+    if (g.quality !== quality) {
+      quality = g.quality;
+      res.dispose();
+      res = buildSky(quality);
+      root.add(res.root);
     }
-    return () => {
-      const h = holder.current;
-      if (!h) return;
-      killRef.current = window.setTimeout(() => {
-        killRef.current = 0;
-        if (holder.current === h) {
-          h.res.dispose();
-          holder.current = null;
-        }
-      }, 0);
-    };
-  }, []);
 
-  useFrame((state, rawDt) => {
     const dt = rawDt > 0.05 ? 0.05 : rawDt;
-    const anim = animRef.current;
-    if (!anim) return;
     anim.t += dt;
     const t = anim.t;
     const calm = g.reducedMotion;
@@ -1102,7 +1091,7 @@ export function Sky({ g }: { g: Game }) {
         // держит долю секунды, и мерцание начало бы дрожать ступеньками.
         u.uTime.value = t % 1000;
         u.uOpacity.value = anim.wStars;
-        u.uDpr.value = state.gl.getPixelRatio();
+        u.uDpr.value = c.renderer.getPixelRatio();
         // На полной амплитуде две тысячи точек дышат вразнобой, и небо кипит —
         // на статичном кадре это незаметно, а в движении читается как шум.
         // Мерцание должно быть на грани восприятия, а не спецэффектом.
@@ -1153,7 +1142,9 @@ export function Sky({ g }: { g: Game }) {
         const tint = res.meteorTint;
         const colors = res.meteors.instanceColor;
         for (let i = 0; i < phase.length; i++) {
-          let p = phase[i] + range(hash2(i * 131 + cycle[i] * 7919, 7), 0.3, 0.62) * (calm ? 0.55 : 1) * dt;
+          let p =
+            phase[i] +
+            range(hash2(i * 131 + cycle[i] * 7919, 7), 0.3, 0.62) * (calm ? 0.55 : 1) * dt;
           if (p >= 1) {
             p -= 1;
             cycle[i] = cycle[i] + 1;
@@ -1212,7 +1203,14 @@ export function Sky({ g }: { g: Game }) {
         res.haloSprite.scale.set(s, s, 1);
       }
     }
-  });
+  }
 
-  return <primitive object={res.root} dispose={null} />;
+  return {
+    object: root,
+    update,
+    dispose() {
+      res.dispose();
+      root.clear();
+    },
+  };
 }

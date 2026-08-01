@@ -22,12 +22,13 @@
  *      углов кадра просвечивал бы купол неба. Заодно склон даёт лесу, на чём
  *      стоять: основание дерева садится на тот же профиль `slopeY`.
  *
- *   3. ЛЕС. Один InstancedMesh низкополигонального хвойника. Пул рассчитан на
- *      самый жирный пресет, в кадре занимается столько слотов, сколько
- *      разрешает `QUALITY[g.quality].trees`. Освещение запечено в цвет вершин:
- *      почти чёрное тело `COLORS.foliage` плюс узкий блик `COLORS.foliageLit`
- *      на грани, повёрнутой к дороге. Цвет инстанса — только затемнение, он
- *      никогда не выводит дерево ярче `foliage`.
+ *   3. ЛЕС. Один InstancedMesh низкополигонального хвойника. Пул считается один
+ *      раз по `QUALITY[ctx.quality].trees` — качество меняется пересборкой
+ *      систем, а не переразмером буферов на ходу; в кадре занимается столько
+ *      слотов, сколько разрешает пресет, но не больше пула. Освещение запечено
+ *      в цвет вершин: почти чёрное тело `COLORS.foliage` плюс узкий блик
+ *      `COLORS.foliageLit` на грани, повёрнутой к дороге. Цвет инстанса —
+ *      только затемнение, он никогда не выводит дерево ярче `foliage`.
  *
  * ЛЕНТЫ ЖЁСТКИЕ. Внутри клетки s-сетки полоса не меняет формы: и `localX`, и
  * `localY`, и `localZ` отличаются от «сеточных» координат ровно на общий сдвиг
@@ -41,12 +42,14 @@
  * потому не заканчиваются резкой линией. Хребты стоят в 1–2 км, то есть далеко
  * за `FOG.far`, — линейный туман съел бы их целиком, поэтому у них `fog: false`
  * и собственное растворение по альфе в вершинах.
+ *
+ * Генераторы деревьев и высоты хребта приходят снаружи, в `TerrainDeps`. Это не
+ * церемония: ровно она и не даёт этому модулю импортировать `worldGen`.
  */
 
-import { useEffect, useRef } from "react";
-import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
+import type { RenderCtx, System } from "../ctx";
 import type { Game, Tree } from "../types";
 import { COLORS, FOG, QUALITY } from "../config";
 import { localX, localY, localZ, roadX, roadY } from "../road";
@@ -160,9 +163,6 @@ function slopeY(a: number): number {
 }
 
 /* ---------- лес ---------- */
-
-/** Пул на самый жирный пресет: качество можно менять на лету, а пул — нет. */
-const TREE_POOL = Math.max(QUALITY[0].trees, QUALITY[1].trees, QUALITY[2].trees);
 
 /** Дальность леса по пресетам, доля от `FOG.far`. Дальше туман съедает дерево
  *  на две трети и больше — платить за него нечем. Плюс пул перестаёт кончаться
@@ -358,6 +358,8 @@ interface World {
   rim: Strip[];
   apron: Strip[];
   trees: THREE.InstancedMesh;
+  /** Размер пула инстансов: считается один раз, на лету не меняется. */
+  pool: number;
   /** Какое дерево лежит в слоте: пока то же — цвет не пересчитываем. */
   keys: Float64Array;
   /** Диапазон загрузки матриц. Один объект на всю жизнь: `addUpdateRange`
@@ -385,11 +387,9 @@ interface World {
   camS: number;
   camX: number;
   colDirty: boolean;
-
-  dispose: () => void;
 }
 
-function buildWorld(): World {
+function buildWorld(pool: number): World {
   const group = new THREE.Group();
   const mats: THREE.Material[] = [];
   const geoms: THREE.BufferGeometry[] = [];
@@ -472,18 +472,18 @@ function buildWorld(): World {
 
   const treeGeom = buildConifer(lr, lg, lb);
   geoms.push(treeGeom);
-  const trees = new THREE.InstancedMesh(treeGeom, matTree, TREE_POOL);
+  const trees = new THREE.InstancedMesh(treeGeom, matTree, pool);
   trees.frustumCulled = false;
   trees.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   // Цвета инстансов заводим заранее: в кадре останется только переписать те,
   // в чьих слотах сменилось дерево. Матрицы не трогаем — `trees.count` не
   // пускает в отрисовку ни один слот, который не был заполнен в этом кадре.
   _col.setRGB(1, 1, 1);
-  for (let i = 0; i < TREE_POOL; i++) trees.setColorAt(i, _col);
+  for (let i = 0; i < pool; i++) trees.setColorAt(i, _col);
   trees.count = 0;
   group.add(trees);
 
-  const keys = new Float64Array(TREE_POOL);
+  const keys = new Float64Array(pool);
   keys.fill(Number.NaN);
 
   const w: World = {
@@ -494,6 +494,7 @@ function buildWorld(): World {
     rim,
     apron,
     trees,
+    pool,
     keys,
     matRange: { start: 0, count: 0 },
     foliage,
@@ -511,11 +512,6 @@ function buildWorld(): World {
     camS: 0,
     camX: 0,
     colDirty: false,
-    dispose: () => {
-      for (const m of mats) m.dispose();
-      for (const geom of geoms) geom.dispose();
-      trees.dispose();
-    },
   };
   w.cb = (t: Tree) => placeTree(w, t);
   return w;
@@ -785,10 +781,9 @@ function finishTrees(w: World) {
   if (w.colDirty && w.trees.instanceColor) w.trees.instanceColor.needsUpdate = true;
 }
 
-/* ---------- компонент ---------- */
+/* ---------- система ---------- */
 
-export interface TerrainProps {
-  g: Game;
+export interface TerrainDeps {
   /**
    * Итератор деревьев в диапазоне дистанций (обычно `worldGen.forEachTree`).
    * ВНИМАНИЕ: колбэк получает один и тот же объект — ссылку не сохраняем.
@@ -798,49 +793,41 @@ export interface TerrainProps {
   ridge: (s: number, side: -1 | 1) => number;
 }
 
-export function Terrain({ g, trees, ridge }: TerrainProps) {
-  // Ресурсы в ref, а не в useMemo: StrictMode дважды прогоняет рендер, и
-  // фабрика useMemo успела бы собрать два леса, из которых один утёк бы.
-  const holder = useRef<World | null>(null);
-  if (holder.current === null) holder.current = buildWorld();
-  const w = holder.current;
+export function createTerrain(ctx: RenderCtx, deps: TerrainDeps): System {
+  // Пул инстансов — по пресету, с которым система создана. Смена качества на
+  // лету пересобирает системы целиком, поэтому переразмер здесь не нужен.
+  const w = buildWorld(QUALITY[ctx.quality].trees);
+  const { trees, ridge } = deps;
 
-  // Освобождение отложено на тик: StrictMode размонтирует и тут же монтирует
-  // компонент обратно, и настоящий unmount от этой репетиции надо отличать.
-  const killRef = useRef(0);
-  useEffect(() => {
-    if (killRef.current) {
-      clearTimeout(killRef.current);
-      killRef.current = 0;
-    }
-    return () => {
-      const h = holder.current;
-      if (!h) return;
-      killRef.current = window.setTimeout(() => {
-        killRef.current = 0;
-        if (holder.current === h) {
-          h.dispose();
-          holder.current = null;
-        }
-      }, 0);
-    };
-  }, []);
+  return {
+    object: w.group,
 
-  useFrame(() => {
-    const preset = QUALITY[g.quality];
-    w.camS = g.s;
-    w.camX = g.x;
-    w.limit = preset.trees < TREE_POOL ? preset.trees : TREE_POOL;
-    w.range = TREE_RANGE[g.quality];
-    w.laneMax = TREE_LANE_MAX[g.quality];
-    w.slot = 0;
-    w.colDirty = false;
+    update(g: Game) {
+      const preset = QUALITY[g.quality];
+      w.camS = g.s;
+      w.camX = g.x;
+      // Зажим по пулу оставлен намеренно: если качество успело уехать выше
+      // того, с которым система построена, лес просто не досчитается деревьев
+      // вместо выхода за буфер матриц.
+      w.limit = preset.trees < w.pool ? preset.trees : w.pool;
+      w.range = TREE_RANGE[g.quality];
+      w.laneMax = TREE_LANE_MAX[g.quality];
+      w.slot = 0;
+      w.colDirty = false;
 
-    trees(g.s - 20, g.s + w.range, w.cb);
-    finishTrees(w);
-    drawApron(w, g);
-    drawRidge(w, g, ridge);
-  });
+      trees(g.s - 20, g.s + w.range, w.cb);
+      finishTrees(w);
+      drawApron(w, g);
+      drawRidge(w, g, ridge);
+    },
 
-  return <primitive object={w.group} dispose={null} />;
+    dispose() {
+      // Авто-освобождения при размонтировании больше нет: всё, что уехало на
+      // GPU, освобождается здесь руками.
+      for (const m of w.mats) m.dispose();
+      for (const geom of w.geoms) geom.dispose();
+      // У InstancedMesh свои буферы матриц и цветов — геометрия их не трогает.
+      w.trees.dispose();
+    },
+  };
 }

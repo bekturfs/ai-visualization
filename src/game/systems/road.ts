@@ -27,25 +27,26 @@
  * Всё на MeshBasicMaterial: настоящего света в сцене нет, есть свечение и bloom,
  * поэтому яркому выставлен `toneMapped: false`.
  *
- * Ни одной аллокации в кадре: скретч-массивы строк и матрицы подняты в модуль,
- * пулы штрихов и катафотов — InstancedMesh, у которых в кадре меняется только
- * `count` (живые слоты идут подряд, прятать хвост не нужно).
+ * Ни одной аллокации в кадре: матрицы и цвета-скретч подняты в модуль, строковые
+ * массивы живут в мире системы, пулы штрихов и катафотов — InstancedMesh, у
+ * которых в кадре меняется только `count` (живые слоты идут подряд, прятать
+ * хвост не нужно).
+ *
+ * Размеры всех пулов берутся из пресета качества **на сборке**: число сегментов
+ * ленты, длина строковых массивов и число слотов у штрихов. Смена качества —
+ * это пересборка системы в `main.ts`, а не изменение размеров на ходу.
  */
 
-import { useEffect, useMemo } from "react";
-import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
-import type { Game } from "../types";
+import type { RenderCtx, System } from "../ctx";
+import type { Game, Quality } from "../types";
 import { COLORS, FOG, QUALITY, ROAD, ROAD_LEN } from "../config";
 import { roadPitch, roadX, roadY } from "../road";
 import { clamp, clamp01, smoothstep } from "../num";
 import { hash1 } from "../rng";
 
 /* ---------- константы раскладки ---------- */
-
-/** Максимум строк ленты: по строке на стык сегментов, плюс одна «за спиной». */
-const ROWS_MAX = ROAD.segCount + 2;
 
 /**
  * Насколько разметка толстеет с дистанцией, 1/м, и предел утолщения. На
@@ -83,7 +84,6 @@ const DASH_X = (ROAD.laneCenters[0] + ROAD.laneCenters[1]) * 0.5;
 const DASH_PERIOD = ROAD.dashLen + ROAD.dashGap;
 /** Дальше `MARK_FADE` всё равно гасит штрих в ноль — дальность обрезана по ней. */
 const DASH_RANGE: readonly [number, number, number] = [260, 320, 350];
-const DASH_SLOTS = Math.ceil(DASH_RANGE[2] / DASH_PERIOD) + 2;
 
 /** Катафоты на отбойнике. */
 const STUD_PERIOD = 13;
@@ -133,28 +133,6 @@ const STREAKS: readonly StreakSpec[] = [
 ];
 
 /* ---------- скретч кадра ---------- */
-
-/** Координаты строк **относительно `base`**, пересчитываются при смене клетки. */
-const rowX = new Float64Array(ROWS_MAX);
-const rowY = new Float64Array(ROWS_MAX);
-const rowZ = new Float64Array(ROWS_MAX);
-/** Прибавка к толщине разметки, тоже привязана к сетке. */
-const rowWide = new Float64Array(ROWS_MAX);
-/** Мокрые пятна вдоль трассы — функция от `s`, живёт вместе с дорогой. */
-const rowWet = new Float64Array(ROWS_MAX);
-/** Продольная волна бликов по фазам. */
-const rowBand: Float64Array[] = [];
-for (let b = 0; b < BANDS; b++) rowBand.push(new Float64Array(ROWS_MAX));
-
-/** Насколько строка утонула в ночи, 0…1. */
-const rowFog = new Float64Array(ROWS_MAX);
-/** Блеск асфальта: пятна вдоль дороги + световое пятно фар. */
-const rowLit = new Float64Array(ROWS_MAX);
-/** Отдельная кривая для отбойника: он ловит фары дальше, чем полотно. */
-const rowRail = new Float64Array(ROWS_MAX);
-/** Яркость продольных бликов по фазам. */
-const rowGlow: Float64Array[] = [];
-for (let b = 0; b < BANDS; b++) rowGlow.push(new Float64Array(ROWS_MAX));
 
 /** Значения подсветки текущей строки по индексу источника — чтобы в цикле по
  *  колонкам не разыменовывать массив массивов на каждую вершину. */
@@ -273,6 +251,8 @@ interface Ribbon {
 /** Что нужно знать о ленте на сборке. */
 interface RibbonSpec {
   cols: Col[];
+  /** Максимум строк общей сетки — из пресета качества. */
+  rowsMax: number;
   /** Через сколько строк общей сетки берётся своя строка. */
   rowStep: number;
   /** Предел утолщения разметки (0 — не толстеет). */
@@ -294,7 +274,7 @@ function buildRibbon(spec: RibbonSpec): Ribbon {
   const fade = spec.fade ?? 1;
   const fog = linear(spec.fog);
   const nc = cols.length;
-  const rows = Math.ceil((ROWS_MAX - 1) / rowStep) + 1;
+  const rows = Math.ceil((spec.rowsMax - 1) / rowStep) + 1;
 
   const pos = new Float32Array(nc * rows * 3);
   const colr = new Float32Array(nc * rows * 3);
@@ -347,14 +327,18 @@ function buildRibbon(spec: RibbonSpec): Ribbon {
 }
 
 /**
- * Переписать позиции ленты. Вызывается только при смене клетки сетки или
- * пресета качества — внутри клетки вершины стоят на месте.
+ * Переписать позиции ленты. Вызывается только при смене клетки сетки —
+ * внутри клетки вершины стоят на месте.
  */
-function writePositions(rb: Ribbon, rows: number) {
+function writePositions(w: RoadWorld, rb: Ribbon, rows: number) {
   const cols = rb.cols;
   const nc = cols.length;
   const pos = rb.pos;
   const k = rb.rowStep;
+  const rowX = w.rowX;
+  const rowY = w.rowY;
+  const rowZ = w.rowZ;
+  const rowWide = w.rowWide;
   const last = rows - 1;
   const jMax = Math.ceil(last / k);
   let p = 0;
@@ -384,13 +368,14 @@ function writePositions(rb: Ribbon, rows: number) {
  * полностью ушла в туман, дальше рисовать нечего: следующие строки — сплошной
  * фон. Это и есть «лента заканчивается внутри тумана», а не у дальней плоскости.
  */
-function writeColors(rb: Ribbon, rows: number) {
+function writeColors(w: RoadWorld, rb: Ribbon, rows: number) {
   const cols = rb.cols;
   const nc = cols.length;
   const colr = rb.colr;
   const k = rb.rowStep;
   const lits = rb.lits;
   const nl = lits.length;
+  const rowFog = w.rowFog;
   const last = rows - 1;
   const jMax = Math.ceil(last / k);
   let p = 0;
@@ -444,7 +429,16 @@ function unitQuad(): THREE.PlaneGeometry {
 
 /* ---------- сборка ---------- */
 
-function buildWorld() {
+function buildWorld(quality: Quality) {
+  // Сегменты ленты — из пресета качества, один раз. Отсюда же длина строковых
+  // массивов и дальность штрихов: пресет меняется пересборкой системы.
+  const segs = clamp(Math.round(QUALITY[quality].roadSegments), 16, ROAD.segCount);
+  /** Максимум строк ленты: по строке на стык сегментов, плюс одна «за спиной». */
+  const rowsMax = segs + 2;
+  const gridStep = ROAD_LEN / segs;
+  const dashRange = DASH_RANGE[quality];
+  const dashSlots = Math.ceil(dashRange / DASH_PERIOD) + 2;
+
   const group = new THREE.Group();
   // Ленты живут в своей группе: раз в клетку сетки в них переписываются
   // вершины, а каждый кадр двигается только вот эта одна матрица.
@@ -453,6 +447,30 @@ function buildWorld() {
 
   const mats: THREE.Material[] = [];
   const geoms: THREE.BufferGeometry[] = [];
+
+  /* --- строковый скретч: всё, что считается по дистанции, а не по вершинам --- */
+
+  /** Координаты строк **относительно `base`**, пересчитываются при смене клетки. */
+  const rowX = new Float64Array(rowsMax);
+  const rowY = new Float64Array(rowsMax);
+  const rowZ = new Float64Array(rowsMax);
+  /** Прибавка к толщине разметки, тоже привязана к сетке. */
+  const rowWide = new Float64Array(rowsMax);
+  /** Мокрые пятна вдоль трассы — функция от `s`, живёт вместе с дорогой. */
+  const rowWet = new Float64Array(rowsMax);
+  /** Продольная волна бликов по фазам. */
+  const rowBand: Float64Array[] = [];
+  for (let b = 0; b < BANDS; b++) rowBand.push(new Float64Array(rowsMax));
+
+  /** Насколько строка утонула в ночи, 0…1. */
+  const rowFog = new Float64Array(rowsMax);
+  /** Блеск асфальта: пятна вдоль дороги + световое пятно фар. */
+  const rowLit = new Float64Array(rowsMax);
+  /** Отдельная кривая для отбойника: он ловит фары дальше, чем полотно. */
+  const rowRail = new Float64Array(rowsMax);
+  /** Яркость продольных бликов по фазам. */
+  const rowGlow: Float64Array[] = [];
+  for (let b = 0; b < BANDS; b++) rowGlow.push(new Float64Array(rowsMax));
 
   /* --- материалы --- */
 
@@ -496,6 +514,7 @@ function buildWorld() {
       col(edge, 0, Y_SHOULDER, COLORS.shoulder, 0.55, COLORS.shoulder, 0.7, true),
       col(outer, 0, Y_SHOULDER, COLORS.shoulder, 0.26, COLORS.shoulder, 0.26, false),
     ],
+    rowsMax,
     rowStep: 2,
     fog: COLORS.night0,
     lits: [rowLit],
@@ -515,6 +534,7 @@ function buildWorld() {
       col(hw * 0.5, 0, 0, COLORS.asphalt, 0.7, COLORS.asphaltSheen, 0.62, true),
       col(hw, 0, 0, COLORS.asphalt, 0.55, COLORS.asphaltSheen, 0.3, false),
     ],
+    rowsMax,
     rowStep: 1,
     fog: COLORS.night0,
     lits: [rowLit],
@@ -535,6 +555,7 @@ function buildWorld() {
   }
   const streaks = buildRibbon({
     cols: streakCols,
+    rowsMax,
     // Шаг мельче, чем у обочины: продольная волна блика должна тянуться
     // градиентом, а не ступеньками — это самый заметный слой в ближней зоне.
     rowStep: 2,
@@ -563,6 +584,7 @@ function buildWorld() {
       col(eg, -MARK_H, Y_MARK, COLORS.markSide, 0.4, COLORS.markSide, 0.34, true),
       col(eg, MARK_H, Y_MARK, COLORS.markSide, 0.4, COLORS.markSide, 0.34, false),
     ],
+    rowsMax,
     rowStep: 1,
     widen: WIDEN_MAX,
     fade: MARK_FADE,
@@ -587,6 +609,7 @@ function buildWorld() {
   }
   const rails = buildRibbon({
     cols: railCols,
+    rowsMax,
     rowStep: 2,
     fog: COLORS.night0,
     lits: [rowRail],
@@ -605,7 +628,7 @@ function buildWorld() {
   const quad = unitQuad();
   geoms.push(quad);
 
-  const dashes = new THREE.InstancedMesh(quad, matGlow, DASH_SLOTS * 2);
+  const dashes = new THREE.InstancedMesh(quad, matGlow, dashSlots * 2);
   dashes.frustumCulled = false;
   dashes.renderOrder = 3;
   dashes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -642,6 +665,22 @@ function buildWorld() {
     streaks,
     dashes,
     studs,
+    /* Размеры и дальности, снятые с пресета качества на сборке. */
+    segs,
+    gridStep,
+    dashRange,
+    dashSlots,
+    /* Строковый скретч. */
+    rowX,
+    rowY,
+    rowZ,
+    rowWide,
+    rowWet,
+    rowBand,
+    rowFog,
+    rowLit,
+    rowRail,
+    rowGlow,
     dashRGB: linear(COLORS.markSide),
     // Красный слева — так стоят катафоты на встречной кромке, и так же они
     // выглядят в референсе; справа — цвет из палитры.
@@ -680,14 +719,14 @@ function rebuildGrid(w: RoadWorld, base: number, step: number, rows: number) {
 
   for (let i = 0; i < rowsUsed; i++) {
     const s = base + (i - 1) * step;
-    rowX[i] = roadX(s) - bx;
-    rowY[i] = roadY(s) - by;
-    rowZ[i] = base - s;
+    w.rowX[i] = roadX(s) - bx;
+    w.rowY[i] = roadY(s) - by;
+    w.rowZ[i] = base - s;
 
     const dw = (i - 1) * step - lag - WIDEN_FROM;
-    rowWide[i] = dw > 0 ? dw * WIDEN_RATE : 0;
+    w.rowWide[i] = dw > 0 ? dw * WIDEN_RATE : 0;
 
-    rowWet[i] = 0.5 + 0.3 * Math.sin(s * 0.021) + 0.2 * Math.sin(s * 0.0067 + 1.3);
+    w.rowWet[i] = 0.5 + 0.3 * Math.sin(s * 0.021) + 0.2 * Math.sin(s * 0.0067 + 1.3);
 
     for (let b = 0; b < BANDS; b++) {
       const ph = BAND_PHASE[b];
@@ -695,7 +734,7 @@ function rebuildGrid(w: RoadWorld, base: number, step: number, rows: number) {
         0.5 + 0.5 * Math.sin(s * 0.03 + ph + Math.sin(s * 0.0088 + ph * 0.7) * 2.1);
       // Куб: середины гаснут, остаются редкие длинные вспышки — то самое
       // «несколько отражений, а между ними чёрный асфальт».
-      rowBand[b][i] = raw * raw * raw;
+      w.rowBand[b][i] = raw * raw * raw;
     }
   }
 
@@ -704,74 +743,70 @@ function rebuildGrid(w: RoadWorld, base: number, step: number, rows: number) {
   w.rows = rowsUsed;
   w.baseX = bx;
   w.baseY = by;
-  for (const rb of w.list) writePositions(rb, rowsUsed);
+  for (const rb of w.list) writePositions(w, rb, rowsUsed);
 }
 
-/* ---------- компонент ---------- */
+/* ---------- система ---------- */
 
-export function Road({ g }: { g: Game }) {
-  const w = useMemo(buildWorld, []);
+export function createRoad(ctx: RenderCtx): System {
+  const w = buildWorld(ctx.quality);
 
-  // Всё, что попало на GPU, освобождается на размонтировании. Детей группы при
-  // этом не трогаем: в StrictMode React монтирует компонент дважды, и пустая
-  // группа после «первого» размонтирования оставила бы сцену без дороги.
-  useEffect(
-    () => () => {
+  return {
+    object: w.group,
+
+    update(g: Game) {
+      const step = w.gridStep;
+      const camS = g.s;
+      const camX = g.x;
+      // База привязана к сетке сегментов — вершины стоят на месте, пока камера
+      // идёт внутри клетки. Первая строка уходит за камеру, и не ближе BEHIND
+      // метров к ней: вершина в самой плоскости камеры — вырожденный случай
+      // перспективного деления, и связываться с ним незачем.
+      let base = Math.floor(camS / step) * step;
+      if (camS - base < BEHIND) base -= step;
+
+      if (base !== w.base || step !== w.step) rebuildGrid(w, base, step, w.segs + 2);
+
+      const rows = w.rows;
+      const camRX = roadX(camS);
+      const camRY = roadY(camS);
+      // Весь сдвиг мира за кадр — одна матрица группы, а не переписанные вершины.
+      w.ribbons.position.set(w.baseX - camRX - camX, w.baseY - camRY, camS - base);
+
+      // Дистанция строки до камеры: `s = base + (i - 1) * step`, без тригонометрии.
+      let d = base - step - camS;
+      for (let i = 0; i < rows; i++, d += step) {
+        w.rowFog[i] = smoothstep(FADE0, FADE1, d);
+        // Пятно собственных фар держим коротким: длинное поднимало весь асфальт
+        // до серого, а мокрая дорога должна быть чёрной между бликами.
+        w.rowLit[i] = clamp01(w.rowWet[i] * 0.3 + smoothstep(78, 3, d) * 0.55);
+        w.rowRail[i] = 0.16 + 0.84 * smoothstep(320, 42, d);
+        const env = 0.1 + 0.9 * smoothstep(330, 15, d);
+        for (let b = 0; b < BANDS; b++) w.rowGlow[b][i] = w.rowBand[b][i] * env;
+      }
+
+      // На экономном пресете мокрых бликов нет: они чистая декорация.
+      const wetOn = g.quality > 0;
+      w.streaks.mesh.visible = wetOn;
+      for (const rb of w.list) {
+        if (rb === w.streaks && !wetOn) continue;
+        writeColors(w, rb, rows);
+      }
+
+      drawDashes(w, camS, camX, camRX, camRY);
+      drawStuds(w, g, camS, camX, camRX, camRY);
+    },
+
+    dispose() {
+      // Всё, что попало на GPU, освобождается вручную: авто-освобождения при
+      // размонтировании больше нет ни у кого.
       for (const m of w.mats) m.dispose();
       for (const geom of w.geoms) geom.dispose();
       // У InstancedMesh свои буферы матриц и цветов — геометрия их не освобождает.
       w.dashes.dispose();
       w.studs.dispose();
     },
-    [w],
-  );
-
-  useFrame(() => {
-    const preset = QUALITY[g.quality];
-    const segs = clamp(Math.round(preset.roadSegments), 16, ROAD.segCount);
-    const step = ROAD_LEN / segs;
-    const camS = g.s;
-    const camX = g.x;
-    // База привязана к сетке сегментов — вершины стоят на месте, пока камера
-    // идёт внутри клетки. Первая строка уходит за камеру, и не ближе BEHIND
-    // метров к ней: вершина в самой плоскости камеры — вырожденный случай
-    // перспективного деления, и связываться с ним незачем.
-    let base = Math.floor(camS / step) * step;
-    if (camS - base < BEHIND) base -= step;
-
-    if (base !== w.base || step !== w.step) rebuildGrid(w, base, step, segs + 2);
-
-    const rows = w.rows;
-    const camRX = roadX(camS);
-    const camRY = roadY(camS);
-    // Весь сдвиг мира за кадр — одна матрица группы, а не переписанные вершины.
-    w.ribbons.position.set(w.baseX - camRX - camX, w.baseY - camRY, camS - base);
-
-    // Дистанция строки до камеры: `s = base + (i - 1) * step`, без тригонометрии.
-    let d = base - step - camS;
-    for (let i = 0; i < rows; i++, d += step) {
-      rowFog[i] = smoothstep(FADE0, FADE1, d);
-      // Пятно собственных фар держим коротким: длинное поднимало весь асфальт
-      // до серого, а мокрая дорога должна быть чёрной между бликами.
-      rowLit[i] = clamp01(rowWet[i] * 0.3 + smoothstep(78, 3, d) * 0.55);
-      rowRail[i] = 0.16 + 0.84 * smoothstep(320, 42, d);
-      const env = 0.1 + 0.9 * smoothstep(330, 15, d);
-      for (let b = 0; b < BANDS; b++) rowGlow[b][i] = rowBand[b][i] * env;
-    }
-
-    // На экономном пресете мокрых бликов нет: они чистая декорация.
-    const wetOn = g.quality > 0;
-    w.streaks.mesh.visible = wetOn;
-    for (const rb of w.list) {
-      if (rb === w.streaks && !wetOn) continue;
-      writeColors(rb, rows);
-    }
-
-    drawDashes(w, g, camS, camX, camRX, camRY);
-    drawStuds(w, g, camS, camX, camRX, camRY);
-  });
-
-  return <primitive object={w.group} />;
+  };
 }
 
 /* ---------- инстансы ---------- */
@@ -784,7 +819,6 @@ function liveCount(d0: number, period: number, range: number, slots: number): nu
 
 function drawDashes(
   w: RoadWorld,
-  g: Game,
   camS: number,
   camX: number,
   camRX: number,
@@ -792,7 +826,7 @@ function drawDashes(
 ) {
   const half = ROAD.dashLen * 0.5;
   const base = Math.floor(camS / DASH_PERIOD) * DASH_PERIOD;
-  const live = liveCount(base + half - camS, DASH_PERIOD, DASH_RANGE[g.quality], DASH_SLOTS);
+  const live = liveCount(base + half - camS, DASH_PERIOD, w.dashRange, w.dashSlots);
   const rgb = w.dashRGB;
   const mesh = w.dashes;
 

@@ -48,12 +48,21 @@
  * стоят ни вершины, ни байта загрузки, а в кадре обычно живых бонусов 3…6 из 24.
  * Время берётся из `g.t`, а не из часов кадра, поэтому пауза честно
  * останавливает и вращение, и вспышку.
+ *
+ * ПОСЛЕ УХОДА REACT. Ресурсы собираются один раз в теле фабрики (раньше это
+ * делал ref-холдер, обходивший двойной монтаж StrictMode), кадр — это тело
+ * `update`, а освобождение — `dispose`: без r3f никто больше не освобождает
+ * геометрию и материалы за нас, поэтому каждый созданный ресурс перечислен
+ * явно. Вся память про слоты (`seenId`, `done`), вспышки (`pops`) и игровое
+ * время (`anim`) живёт в замыкании фабрики, а не в модуле: две системы, если их
+ * когда-нибудь создадут, не будут стирать состояние друг другу. Модульными
+ * остались только скретч-объекты матриц и цветов — в них ничего не переживает
+ * один синхронный вызов `update`.
  */
 
-import { useEffect, useRef } from "react";
-import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
+import type { RenderCtx, System } from "../ctx";
 import type { Game, Pickup } from "../types";
 import { COLORS, LIMITS, PICKUPS, QUALITY } from "../config";
 import { localX, localY, localZ } from "../road";
@@ -618,6 +627,9 @@ function buildWorld(): World {
   }
 
   const dispose = () => {
+    // Без r3f никто не освобождает ресурсы за нас: считаем поимённо.
+    // 3 геометрии (искра, капсула, квад), до 4 материалов (тело + три квада),
+    // до 3 текстур (два ореола, шахта), 5 InstancedMesh.
     for (const m of mats) m.dispose();
     for (const geo of geoms) geo.dispose();
     for (const t of texs) t.dispose();
@@ -626,6 +638,7 @@ function buildWorld(): World {
     starHalo?.mesh.dispose();
     canHalo?.mesh.dispose();
     shaft?.mesh.dispose();
+    group.clear();
   };
 
   return {
@@ -740,180 +753,161 @@ interface Anim {
   runs: number;
 }
 
-/* ---------- компонент ---------- */
+/* ---------- система ---------- */
 
-export function Pickups({ g }: { g: Game }) {
-  // Ресурсы в ref, а не в useMemo: в StrictMode фабрика useMemo успела бы
-  // собрать два комплекта, из которых один утёк бы мимо cleanup.
-  const holder = useRef<World | null>(null);
-  if (holder.current === null) holder.current = buildWorld();
-  const w = holder.current;
+/**
+ * `ctx` фабрике не нужен: качество и дальность читаются из `g` каждый кадр
+ * (`g.quality` меняется на лету, пересборки системы для этого не требуется),
+ * а размер холста на бонусы не влияет — поэтому и `resize` здесь нет.
+ */
+export function createPickups(_ctx: RenderCtx): System {
+  const w = buildWorld();
+  const anim: Anim = { lastT: 0, runs: -1 };
 
-  const animRef = useRef<Anim | null>(null);
-  if (animRef.current === null) animRef.current = { lastT: 0, runs: -1 };
+  return {
+    object: w.group,
 
-  // Освобождение отложено на тик: StrictMode размонтирует компонент и тут же
-  // монтирует обратно, и настоящий unmount от этой репетиции надо отличать.
-  const killRef = useRef(0);
-  useEffect(() => {
-    if (killRef.current) {
-      clearTimeout(killRef.current);
-      killRef.current = 0;
-    }
-    return () => {
-      const h = holder.current;
-      if (!h) return;
-      killRef.current = window.setTimeout(() => {
-        killRef.current = 0;
-        if (holder.current === h) {
-          h.dispose();
-          holder.current = null;
-        }
-      }, 0);
-    };
-  }, []);
+    update(g: Game): void {
+      const preset = QUALITY[g.quality];
+      const far = FAR[g.quality];
+      // Без bloom бонусы теряют половину читаемости — добираем яркостью.
+      const gain = preset.bloom ? 1 : 1.3;
+      const calm = g.reducedMotion;
+      const camS = g.s;
+      const camX = g.x;
+      const t = g.t;
 
-  useFrame(() => {
-    const anim = animRef.current;
-    if (!anim) return;
-
-    const preset = QUALITY[g.quality];
-    const far = FAR[g.quality];
-    // Без bloom бонусы теряют половину читаемости — добираем яркостью.
-    const gain = preset.bloom ? 1 : 1.3;
-    const calm = g.reducedMotion;
-    const camS = g.s;
-    const camX = g.x;
-    const t = g.t;
-
-    // Новый заезд: `startRun` поднимает `g.runs` и обнуляет `g.t`, а id бонусов
-    // начинают считаться заново — то есть старые id могут совпасть с новыми.
-    // Поэтому память о слотах и недогоревшие вспышки сбрасываются целиком.
-    if (anim.runs !== g.runs || t < anim.lastT) {
-      anim.runs = g.runs;
-      resetSlots(w);
-    }
-    // В меню и на экране конца `g.t` стоит: вспышка, начатая последним кадром
-    // заезда, иначе зависла бы перед капотом до самого рестарта.
-    if (g.phase === "over" || g.phase === "menu") killPops(w);
-
-    // Шаг игрового времени: на паузе он ноль — вспышка честно замирает.
-    let dtG = t - anim.lastT;
-    if (!(dtG > 0)) dtG = 0;
-    else if (dtG > 0.2) dtG = 0.2;
-    anim.lastT = t;
-
-    w.starBody.n = 0;
-    w.canBody.n = 0;
-    if (w.starHalo) w.starHalo.n = 0;
-    if (w.canHalo) w.canHalo.n = 0;
-    if (w.shaft) w.shaft.n = 0;
-
-    const list = g.pickups;
-    const n = list.length < POOL ? list.length : POOL;
-
-    for (let i = 0; i < n; i++) {
-      const p = list[i];
-
-      // Слот переиспользован под новый бонус — память о нём обнуляется.
-      if (w.seenId[i] !== p.id) {
-        w.seenId[i] = p.id;
-        w.done[i] = 0;
+      // Новый заезд: `startRun` поднимает `g.runs` и обнуляет `g.t`, а id бонусов
+      // начинают считаться заново — то есть старые id могут совпасть с новыми.
+      // Поэтому память о слотах и недогоревшие вспышки сбрасываются целиком.
+      if (anim.runs !== g.runs || t < anim.lastT) {
+        anim.runs = g.runs;
+        resetSlots(w);
       }
+      // В меню и на экране конца `g.t` стоит: вспышка, начатая последним кадром
+      // заезда, иначе зависла бы перед капотом до самого рестарта.
+      if (g.phase === "over" || g.phase === "menu") killPops(w);
 
-      if (p.taken) {
-        // Ровно один раз на бонус: дальше вспышка живёт в кольце, а слот
-        // свободен и может хоть в этом же кадре уйти под следующий бонус.
-        if (!w.done[i]) {
-          w.done[i] = 1;
-          startPop(w, p);
+      // Шаг игрового времени: на паузе он ноль — вспышка честно замирает.
+      let dtG = t - anim.lastT;
+      if (!(dtG > 0)) dtG = 0;
+      else if (dtG > 0.2) dtG = 0.2;
+      anim.lastT = t;
+
+      w.starBody.n = 0;
+      w.canBody.n = 0;
+      if (w.starHalo) w.starHalo.n = 0;
+      if (w.canHalo) w.canHalo.n = 0;
+      if (w.shaft) w.shaft.n = 0;
+
+      const list = g.pickups;
+      const n = list.length < POOL ? list.length : POOL;
+
+      for (let i = 0; i < n; i++) {
+        const p = list[i];
+
+        // Слот переиспользован под новый бонус — память о нём обнуляется.
+        if (w.seenId[i] !== p.id) {
+          w.seenId[i] = p.id;
+          w.done[i] = 0;
         }
-        continue;
-      }
-      if (!p.active) continue;
 
-      const d = p.s - camS;
-      if (d <= NEAR_CUT || d >= far) continue;
+        if (p.taken) {
+          // Ровно один раз на бонус: дальше вспышка живёт в кольце, а слот
+          // свободен и может хоть в этом же кадре уйти под следующий бонус.
+          if (!w.done[i]) {
+            w.done[i] = 1;
+            startPop(w, p);
+          }
+          continue;
+        }
+        if (!p.active) continue;
 
-      const star = p.kind === "star";
-      const fade = smoothstep(far, far * 0.72, d) * smoothstep(NEAR_CUT, 2, d);
-      // Пульсация — это строб, в спокойном режиме её нет.
-      const puls = calm ? 1 : 1 + 0.16 * Math.sin(t * 3.4 + p.spin * 2.1);
-      const mip = 1 + (MIP_BOOST - 1) * smoothstep(MIP_D0, MIP_D1, d);
+        const d = p.s - camS;
+        if (d <= NEAR_CUT || d >= far) continue;
 
-      const y = PICKUPS.y + (calm ? 0.05 : BOB_AMP) * Math.sin(t * BOB_W + p.spin);
-      const px = localX(p.s, p.lane, camS, camX);
-      const pz = localZ(p.s, camS);
+        const star = p.kind === "star";
+        const fade = smoothstep(far, far * 0.72, d) * smoothstep(NEAR_CUT, 2, d);
+        // Пульсация — это строб, в спокойном режиме её нет.
+        const puls = calm ? 1 : 1 + 0.16 * Math.sin(t * 3.4 + p.spin * 2.1);
+        const mip = 1 + (MIP_BOOST - 1) * smoothstep(MIP_D0, MIP_D1, d);
 
-      emit(
-        w,
-        star,
-        px,
-        localY(p.s, y, camS),
-        pz,
-        p.spin + t * SPIN_W * (star ? 1 : 0.72) * (calm ? 0.5 : 1),
-        angGain(d, BODY_D0, BODY_POW, BODY_MAX),
-        fade * puls * (star ? STAR_GAIN : CAN_GAIN) * gain,
-        (star ? HALO_SIZE : HALO_SIZE * 0.86) * angGain(d, HALO_D0, HALO_POW, HALO_MAX),
-        fade * puls * HALO_GAIN * gain * mip,
-      );
+        const y = PICKUPS.y + (calm ? 0.05 : BOB_AMP) * Math.sin(t * BOB_W + p.spin);
+        const px = localX(p.s, p.lane, camS, camX);
+        const pz = localZ(p.s, camS);
 
-      /* --- шахта света: показывает полосу, в которой висит бонус --- */
-      if (w.shaft) {
-        // Окно, в котором она нужна: дальше 320 м игрок читает только ореол и
-        // решает «ехать или нет», ближе 26 м бонус и так занимает пол-экрана.
-        // Между ними идёт перестроение — вот там и надо показать полосу.
-        const b = SHAFT_GAIN * gain * smoothstep(26, 55, d) * smoothstep(320, 200, d);
-        if (b > 0.002) {
-          const wide = SHAFT_W * angGain(d, SHAFT_D0, SHAFT_POW, SHAFT_MAX);
-          _pos.set(px, localY(p.s, SHAFT_H * 0.5, camS), pz);
-          _scl.set(wide, SHAFT_H, 1);
-          _m4.compose(_pos, _qi, _scl);
-          const rgb = star ? w.starRGB : w.nitroRGB;
-          _col.setRGB(rgb[0] * b, rgb[1] * b, rgb[2] * b);
-          put(w.shaft, _m4, _col);
+        emit(
+          w,
+          star,
+          px,
+          localY(p.s, y, camS),
+          pz,
+          p.spin + t * SPIN_W * (star ? 1 : 0.72) * (calm ? 0.5 : 1),
+          angGain(d, BODY_D0, BODY_POW, BODY_MAX),
+          fade * puls * (star ? STAR_GAIN : CAN_GAIN) * gain,
+          (star ? HALO_SIZE : HALO_SIZE * 0.86) * angGain(d, HALO_D0, HALO_POW, HALO_MAX),
+          fade * puls * HALO_GAIN * gain * mip,
+        );
+
+        /* --- шахта света: показывает полосу, в которой висит бонус --- */
+        if (w.shaft) {
+          // Окно, в котором она нужна: дальше 320 м игрок читает только ореол и
+          // решает «ехать или нет», ближе 26 м бонус и так занимает пол-экрана.
+          // Между ними идёт перестроение — вот там и надо показать полосу.
+          const b = SHAFT_GAIN * gain * smoothstep(26, 55, d) * smoothstep(320, 200, d);
+          if (b > 0.002) {
+            const wide = SHAFT_W * angGain(d, SHAFT_D0, SHAFT_POW, SHAFT_MAX);
+            _pos.set(px, localY(p.s, SHAFT_H * 0.5, camS), pz);
+            _scl.set(wide, SHAFT_H, 1);
+            _m4.compose(_pos, _qi, _scl);
+            const rgb = star ? w.starRGB : w.nitroRGB;
+            _col.setRGB(rgb[0] * b, rgb[1] * b, rgb[2] * b);
+            put(w.shaft, _m4, _col);
+          }
         }
       }
-    }
 
-    /* --- вспышки подбора --- */
-    for (let i = 0; i < w.pops.length; i++) {
-      const pop = w.pops[i];
-      if (!pop.live) continue;
-      const q = pop.q + dtG / POP_TIME;
-      if (q >= 1) {
-        pop.live = false;
-        continue;
+      /* --- вспышки подбора --- */
+      for (let i = 0; i < w.pops.length; i++) {
+        const pop = w.pops[i];
+        if (!pop.live) continue;
+        const q = pop.q + dtG / POP_TIME;
+        if (q >= 1) {
+          pop.live = false;
+          continue;
+        }
+        pop.q = q;
+
+        const k = 1 - q;
+        const k2 = k * k;
+        // Бонус уже за камерой: придерживаем вспышку перед капотом.
+        const sPos = pop.s < camS + POP_HOLD ? camS + POP_HOLD : pop.s;
+        // Дорожка звёзд идёт с шагом 22 м — на максималке это вспышка каждые
+        // 0.3 с. В спокойном режиме такая очередь читается как строб, поэтому
+        // там она тише и почти не раздувается.
+        emit(
+          w,
+          pop.star,
+          localX(sPos, pop.lane, camS, camX),
+          localY(sPos, PICKUPS.y + POP_RISE * q, camS),
+          localZ(sPos, camS),
+          pop.spin + t * SPIN_W + q * 5.5,
+          1 + (calm ? 0.7 : 1.7) * q,
+          k2 * 1.7 * (pop.star ? STAR_GAIN : CAN_GAIN) * gain,
+          HALO_SIZE * (1 + (calm ? 0.9 : 2.2) * q),
+          k2 * POP_FLASH * gain * (calm ? 0.45 : 1),
+        );
       }
-      pop.q = q;
 
-      const k = 1 - q;
-      const k2 = k * k;
-      // Бонус уже за камерой: придерживаем вспышку перед капотом.
-      const sPos = pop.s < camS + POP_HOLD ? camS + POP_HOLD : pop.s;
-      // Дорожка звёзд идёт с шагом 22 м — на максималке это вспышка каждые
-      // 0.3 с. В спокойном режиме такая очередь читается как строб, поэтому
-      // там она тише и почти не раздувается.
-      emit(
-        w,
-        pop.star,
-        localX(sPos, pop.lane, camS, camX),
-        localY(sPos, PICKUPS.y + POP_RISE * q, camS),
-        localZ(sPos, camS),
-        pop.spin + t * SPIN_W + q * 5.5,
-        1 + (calm ? 0.7 : 1.7) * q,
-        k2 * 1.7 * (pop.star ? STAR_GAIN : CAN_GAIN) * gain,
-        HALO_SIZE * (1 + (calm ? 0.9 : 2.2) * q),
-        k2 * POP_FLASH * gain * (calm ? 0.45 : 1),
-      );
-    }
+      seal(w.starBody);
+      seal(w.canBody);
+      if (w.starHalo) seal(w.starHalo);
+      if (w.canHalo) seal(w.canHalo);
+      if (w.shaft) seal(w.shaft);
+    },
 
-    seal(w.starBody);
-    seal(w.canBody);
-    if (w.starHalo) seal(w.starHalo);
-    if (w.canHalo) seal(w.canHalo);
-    if (w.shaft) seal(w.shaft);
-  });
-
-  return <primitive object={w.group} dispose={null} />;
+    dispose() {
+      w.dispose();
+    },
+  };
 }
