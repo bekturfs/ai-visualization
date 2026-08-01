@@ -54,26 +54,30 @@ const GROUND_H = 2;
  * Пружина, тянущая кузов туда, где машина по мнению движка.
  *
  * Считается от собственной частоты, а не подбирается на глаз: `k = m·ω²`,
- * `c = 2ζmω`. Три герца и затухание 0.85 — кузов приходит к цели за пару
- * десятых секунды, без перелёта и без ватности.
+ * `c = 2ζmω`. 1.8 Гц и критическое затухание: кузов приходит к цели без
+ * перелёта. Три герца оказались слишком резкими — на такой жёсткости солвер
+ * с шагом 1/120 уже звенел.
  */
-const LAT_FREQ = 2 * Math.PI * 3;
-const LAT_ZETA = 0.85;
+const LAT_FREQ = 2 * Math.PI * 1.8;
+const LAT_ZETA = 1;
 const LAT_K = MASS * LAT_FREQ * LAT_FREQ;
 const LAT_C = 2 * LAT_ZETA * MASS * LAT_FREQ;
 
 /**
- * На какой высоте относительно центра масс прикладываются продольная и боковая
- * силы, м (отрицательное — ниже). Это и есть источник крена и клевка: приложи
- * их в центр масс — тело поедет вбок, но не наклонится, как оно и было в первой
- * версии. Настоящая машина упирается в дорогу пятном контакта, то есть заметно
- * ниже своего центра тяжести, и потому валится наружу поворота.
+ * Высота центра тяжести над пятном контакта, м. Через неё считается момент
+ * крена и клевка: `M = m·a·h`.
+ *
+ * Раньше вместо этого сила прикладывалась в точку ниже центра масс, и это была
+ * ошибка. Тянущая пружина жёсткая — на метр промаха она даёт полмиллиона
+ * ньютонов, — и на плече в 0.62 м получался момент в триста тысяч ньютон-метров.
+ * Кузов не наклонялся, он проворачивался: замер показал скачок крена в 193
+ * кадрах из 199. Сила и момент разведены: сила идёт в центр масс и только
+ * двигает, момент считается отдельно и ограничен по ускорению.
  */
-const CONTACT_DY = -0.62;
-/** Доля продольного ускорения, уходящая в силу. Единица — «как в жизни». */
-const LONG_GAIN = 1;
-/** Потолок продольного ускорения, м/с², чтобы удар не сложил кузов пополам. */
-const LONG_CLAMP = 14;
+const CG_HEIGHT = 0.36;
+/** Потолки ускорений для моментов, м/с². Выше — момент не растёт. */
+const LAT_CLAMP = 11;
+const LONG_CLAMP = 12;
 
 /** Амплитуда неровностей полотна, м, и её пространственный период. */
 const BUMP_AMP = 0.016;
@@ -83,12 +87,18 @@ const OFFROAD_BUMP = 5.5;
 
 /** Импульс от аварии и от задира об отбойник, Н·с на единицу силы события. */
 const CRASH_IMPULSE = 5200;
-const SCRAPE_IMPULSE = 900;
+/**
+ * Задир об отбойник — это чирк, а не удар, и приходит он часто: движок шлёт
+ * событие до четырёх раз в секунду, пока едешь вдоль ограждения. На прежних
+ * 900 Н·с получалась ровная дробь по кузову — та самая тряска, которую видно,
+ * если прижаться к отбойнику и держать руль.
+ */
+const SCRAPE_IMPULSE = 240;
 
 /** Пределы, за которые снятые с тела величины не выпускаем. */
 const MAX_ROLL = 0.1;
 const MAX_PITCH = 0.13;
-const MAX_HEAVE = 0.16;
+const MAX_HEAVE = 0.09;
 /** Сглаживание считанных величин, 1/с. */
 const READ_RATE = 14;
 
@@ -129,13 +139,18 @@ export async function createPhysics(): Promise<CarPhysics | null> {
     RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(0, REST_Y, 0)
       .setLinearDamping(0.35)
-      .setAngularDamping(2.2)
+      .setAngularDamping(10)
       .setCanSleep(false),
   );
   world.createCollider(
     RAPIER.ColliderDesc.cuboid(HW, HH, HL).setMass(MASS).setFriction(0.9),
     chassis,
   );
+  // Вдоль дороги кузов не ездит: продольное движение — это `g.s`, а не смещение
+  // тела. Без этой блокировки продольная сила уносила тело по Z, оно упиралось
+  // в аварийный порог, телепортировалось обратно — и получалась пила по высоте,
+  // та самая, из-за которой машину дёргало.
+  chassis.setEnabledTranslations(true, true, false, true);
 
   /* --- подвеска: четыре колеса на лучах --- */
   const vehicle = world.createVehicleController(chassis);
@@ -174,7 +189,7 @@ export async function createPhysics(): Promise<CarPhysics | null> {
 
   const impulse = { x: 0, y: 0, z: 0 };
   const force = { x: 0, y: 0, z: 0 };
-  const point = { x: 0, y: 0, z: 0 };
+  const torque = { x: 0, y: 0, z: 0 };
   const groundPos = { x: 0, y: -GROUND_H, z: 0 };
 
   /**
@@ -228,16 +243,21 @@ export async function createPhysics(): Promise<CarPhysics | null> {
     const p = chassis.translation();
     const v = chassis.linvel();
     force.x = (g.x - p.x) * LAT_K - v.x * LAT_C;
-    // Продольная сила из ускорения, которое посчитал движок: она и даёт клевок.
-    const accelLong = dt > 0 ? (g.speed - prevSpeed) / dt : 0;
-    force.z = -clamp(accelLong, -LONG_CLAMP, LONG_CLAMP) * MASS * LONG_GAIN;
     force.y = 0;
+    force.z = 0;
     chassis.resetForces(false);
-    // Прикладываем ниже центра масс — иначе тело поедет, но не наклонится.
-    point.x = p.x;
-    point.y = p.y + CONTACT_DY;
-    point.z = p.z;
-    chassis.addForceAtPoint(force, point, true);
+    chassis.resetTorques(false);
+    // Сила — строго в центр масс: она обязана только двигать.
+    chassis.addForce(force, true);
+
+    // Моменты считаются отдельно и от ОГРАНИЧЕННЫХ ускорений. Крен — от бокового,
+    // клевок — от продольного, оба через плечо до центра тяжести.
+    const accelLat = clamp(force.x / MASS, -LAT_CLAMP, LAT_CLAMP);
+    const accelLong = clamp(dt > 0 ? (g.speed - prevSpeed) / dt : 0, -LONG_CLAMP, LONG_CLAMP);
+    torque.x = -accelLong * MASS * CG_HEIGHT;
+    torque.y = 0;
+    torque.z = accelLat * MASS * CG_HEIGHT;
+    chassis.addTorque(torque, true);
 
     /* --- удары --- */
     for (let i = 0; i < g.events.length; i++) {
@@ -281,7 +301,7 @@ export async function createPhysics(): Promise<CarPhysics | null> {
     // «куда» дрейфует; при жёстком отсчёте `heave` просто упирался в потолок
     // постоянным смещением, и камера всегда висела выше. Камере интересны
     // колебания, а не абсолютная высота, — вот их и оставляем.
-    restY = damp(restY, pos.y, 0.7, dt);
+    restY = damp(restY, pos.y, 0.5, dt);
     const heaveTo = clamp(pos.y - restY, -MAX_HEAVE, MAX_HEAVE);
     const lat = Math.abs(vel.x - (g.vx || 0));
     const skidTo = clamp((lat - SKID_MIN) / (SKID_FULL - SKID_MIN), 0, 1);
@@ -301,8 +321,11 @@ export async function createPhysics(): Promise<CarPhysics | null> {
 
     // Кузов не должен уползать: удерживаем его около начала координат, скорость
     // при этом не трогаем — иначе погасим ту самую инерцию, ради которой всё.
-    if (Math.abs(pos.z) > 0.4 || Math.abs(pos.y - restY) > 1.2 || Math.abs(pos.x - g.x) > 3) {
-      chassis.setTranslation({ x: clamp(pos.x, g.x - 3, g.x + 3), y: restY, z: 0 }, true);
+    // Аварийный возврат — только если тело действительно улетело. По Z оно
+    // теперь не двигается вовсе, так что этой ветке остались лишь патологии.
+    if (Math.abs(pos.y - restY) > 1.5 || Math.abs(pos.x - g.x) > 4) {
+      chassis.setTranslation({ x: g.x, y: restY, z: 0 }, true);
+      chassis.setLinvel({ x: 0, y: 0, z: 0 }, true);
     }
   }
 
