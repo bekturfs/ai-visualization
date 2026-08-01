@@ -27,7 +27,7 @@
 
 import * as THREE from "three";
 
-import { COLORS, PHYS, QUALITY, SKY } from "../config";
+import { COLORS, PHYS, QUALITY, SKY, TUNE } from "../config";
 import type { RenderCtx, System } from "../ctx";
 import { clamp01, damp, lerp, smoothstep } from "../num";
 import { hash2, range } from "../rng";
@@ -1095,7 +1095,7 @@ export function createSky(ctx: RenderCtx): System {
         // На полной амплитуде две тысячи точек дышат вразнобой, и небо кипит —
         // на статичном кадре это незаметно, а в движении читается как шум.
         // Мерцание должно быть на грани восприятия, а не спецэффектом.
-        u.uTwinkle.value = calm ? 0.16 : 0.38;
+        u.uTwinkle.value = calm ? TUNE.sky.twinkleCalm : TUNE.sky.twinkle;
       }
     }
 

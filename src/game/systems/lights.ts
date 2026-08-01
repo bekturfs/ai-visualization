@@ -29,7 +29,7 @@ import * as THREE from "three";
 
 import type { RenderCtx, System } from "../ctx";
 import type { Game, Lamp, Quality, TownLight } from "../types";
-import { COLORS, PHYS, QUALITY, ROAD } from "../config";
+import { COLORS, PHYS, QUALITY, ROAD, TUNE } from "../config";
 import { localX, localY, localZ, roadDY } from "../road";
 import { clamp01, damp, lerp, smoothstep } from "../num";
 import { hash1 } from "../rng";
@@ -83,9 +83,10 @@ const GLOW_Z_BIAS = 0.35;
  * пятен вместо ночного города. Огни должны обозначать расстояние, а не спорить
  * с дорогой за внимание.
  */
-const GLOW_GAIN = 1.1;
-const POOL_GAIN = 0.75;
-const TOWN_GAIN = 0.8;
+// Значения живут в TUNE: их подбирают глазами, и панель в dev крутит именно их.
+const GLOW_GAIN = TUNE.lights.glow;
+const POOL_GAIN = TUNE.lights.pool;
+const TOWN_GAIN = TUNE.lights.town;
 
 /** Сколько метров позади камеры ещё имеет смысл держать фонарь. */
 const LAMP_BEHIND = 10;

@@ -348,6 +348,7 @@ let raf = 0;
 
 function frame(now: number): void {
   raf = requestAnimationFrame(frame);
+  dev?.begin();
   const dt = Math.min(MAX_FRAME, Math.max(0, (now - last) * 0.001));
   last = now;
 
@@ -365,8 +366,20 @@ function frame(now: number): void {
 
   if (effects && effects.active) effects.render();
   else renderer.render(scene, camera);
+  dev?.end();
 }
 raf = requestAnimationFrame(frame);
+
+/* --- панель настройки: только в разработке --- */
+
+let dev: import("./game/devtools").DevTools | null = null;
+if (import.meta.env.DEV) {
+  void import("./game/devtools").then(({ createDevTools }) =>
+    createDevTools(g, { rebuild: rebuildSystems }).then((d) => {
+      dev = d;
+    }),
+  );
+}
 
 /* --- отладочная ручка для Playwright --- */
 

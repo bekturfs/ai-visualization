@@ -41,7 +41,7 @@ import * as THREE from "three";
 
 import type { RenderCtx, System } from "../ctx";
 import type { Game, Quality } from "../types";
-import { COLORS, FOG, QUALITY, ROAD, ROAD_LEN } from "../config";
+import { COLORS, FOG, QUALITY, ROAD, ROAD_LEN, TUNE } from "../config";
 import { roadPitch, roadX, roadY } from "../road";
 import { clamp, clamp01, smoothstep } from "../num";
 import { hash1 } from "../rng";
@@ -575,14 +575,14 @@ function buildWorld(quality: Quality) {
       // это и давало пересвеченные полосы и кашу у горизонта: тонкая линия
       // меньше пикселя, а яркость максимальная. Теперь наоборот — дальний конец
       // приглушён, и разметка спокойно уходит в ночь.
-      col(-eg, -MARK_H, Y_MARK, COLORS.markSide, 0.4, COLORS.markSide, 0.34, true),
-      col(-eg, MARK_H, Y_MARK, COLORS.markSide, 0.4, COLORS.markSide, 0.34, false),
-      col(-0.3, -MARK_H, Y_MARK, COLORS.markCenter, 0.66, COLORS.markCenter, 0.5, true),
-      col(-0.3, MARK_H, Y_MARK, COLORS.markCenter, 0.66, COLORS.markCenter, 0.5, false),
-      col(0.3, -MARK_H, Y_MARK, COLORS.markCenter, 0.66, COLORS.markCenter, 0.5, true),
-      col(0.3, MARK_H, Y_MARK, COLORS.markCenter, 0.66, COLORS.markCenter, 0.5, false),
-      col(eg, -MARK_H, Y_MARK, COLORS.markSide, 0.4, COLORS.markSide, 0.34, true),
-      col(eg, MARK_H, Y_MARK, COLORS.markSide, 0.4, COLORS.markSide, 0.34, false),
+      col(-eg, -MARK_H, Y_MARK, COLORS.markSide, TUNE.road.sideNear, COLORS.markSide, TUNE.road.sideFar, true),
+      col(-eg, MARK_H, Y_MARK, COLORS.markSide, TUNE.road.sideNear, COLORS.markSide, TUNE.road.sideFar, false),
+      col(-0.3, -MARK_H, Y_MARK, COLORS.markCenter, TUNE.road.centerNear, COLORS.markCenter, TUNE.road.centerFar, true),
+      col(-0.3, MARK_H, Y_MARK, COLORS.markCenter, TUNE.road.centerNear, COLORS.markCenter, TUNE.road.centerFar, false),
+      col(0.3, -MARK_H, Y_MARK, COLORS.markCenter, TUNE.road.centerNear, COLORS.markCenter, TUNE.road.centerFar, true),
+      col(0.3, MARK_H, Y_MARK, COLORS.markCenter, TUNE.road.centerNear, COLORS.markCenter, TUNE.road.centerFar, false),
+      col(eg, -MARK_H, Y_MARK, COLORS.markSide, TUNE.road.sideNear, COLORS.markSide, TUNE.road.sideFar, true),
+      col(eg, MARK_H, Y_MARK, COLORS.markSide, TUNE.road.sideNear, COLORS.markSide, TUNE.road.sideFar, false),
     ],
     rowsMax,
     rowStep: 1,
