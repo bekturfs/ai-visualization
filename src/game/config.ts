@@ -256,8 +256,8 @@ export const QUALITY: Record<Quality, QualityPreset> = {
     // головам фонарей, приборке. Стоило порогу опуститься, и в свечение уходила
     // разметка и блики на асфальте, а кадр затягивало молочной пеленой; тёплый
     // оттенок ей давала жёлтая осевая, размазанная по всему небу.
-    bloomStrength: 0.5,
-    bloomRadius: 0.28,
+    bloomStrength: 0.4,
+    bloomRadius: 0.26,
     bloomThreshold: 0.8,
     dprMax: 1.5,
     trails: true,
@@ -271,8 +271,8 @@ export const QUALITY: Record<Quality, QualityPreset> = {
     townLights: 260,
     lamps: 14,
     bloom: true,
-    bloomStrength: 0.6,
-    bloomRadius: 0.3,
+    bloomStrength: 0.46,
+    bloomRadius: 0.28,
     bloomThreshold: 0.8,
     dprMax: 1.9,
     trails: true,

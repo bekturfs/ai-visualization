@@ -549,14 +549,19 @@ function buildWorld() {
   const eg = ROAD.halfWidth - 0.14;
   const marks = buildRibbon({
     cols: [
-      col(-eg, -MARK_H, Y_MARK, COLORS.markSide, 0.62, COLORS.markSide, 1, true),
-      col(-eg, MARK_H, Y_MARK, COLORS.markSide, 0.62, COLORS.markSide, 1, false),
-      col(-0.3, -MARK_H, Y_MARK, COLORS.markCenter, 1, COLORS.markCenter, 1.35, true),
-      col(-0.3, MARK_H, Y_MARK, COLORS.markCenter, 1, COLORS.markCenter, 1.35, false),
-      col(0.3, -MARK_H, Y_MARK, COLORS.markCenter, 1, COLORS.markCenter, 1.35, true),
-      col(0.3, MARK_H, Y_MARK, COLORS.markCenter, 1, COLORS.markCenter, 1.35, false),
-      col(eg, -MARK_H, Y_MARK, COLORS.markSide, 0.62, COLORS.markSide, 1, true),
-      col(eg, MARK_H, Y_MARK, COLORS.markSide, 0.62, COLORS.markSide, 1, false),
+      // Дальний конец был ярче ближнего (1.35 против 1 у осевой) — то есть чем
+      // мельче становилась линия, тем сильнее она светила. На настоящем экране
+      // это и давало пересвеченные полосы и кашу у горизонта: тонкая линия
+      // меньше пикселя, а яркость максимальная. Теперь наоборот — дальний конец
+      // приглушён, и разметка спокойно уходит в ночь.
+      col(-eg, -MARK_H, Y_MARK, COLORS.markSide, 0.4, COLORS.markSide, 0.34, true),
+      col(-eg, MARK_H, Y_MARK, COLORS.markSide, 0.4, COLORS.markSide, 0.34, false),
+      col(-0.3, -MARK_H, Y_MARK, COLORS.markCenter, 0.66, COLORS.markCenter, 0.5, true),
+      col(-0.3, MARK_H, Y_MARK, COLORS.markCenter, 0.66, COLORS.markCenter, 0.5, false),
+      col(0.3, -MARK_H, Y_MARK, COLORS.markCenter, 0.66, COLORS.markCenter, 0.5, true),
+      col(0.3, MARK_H, Y_MARK, COLORS.markCenter, 0.66, COLORS.markCenter, 0.5, false),
+      col(eg, -MARK_H, Y_MARK, COLORS.markSide, 0.4, COLORS.markSide, 0.34, true),
+      col(eg, MARK_H, Y_MARK, COLORS.markSide, 0.4, COLORS.markSide, 0.34, false),
     ],
     rowStep: 1,
     widen: WIDEN_MAX,

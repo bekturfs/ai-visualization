@@ -1103,7 +1103,10 @@ export function Sky({ g }: { g: Game }) {
         u.uTime.value = t % 1000;
         u.uOpacity.value = anim.wStars;
         u.uDpr.value = state.gl.getPixelRatio();
-        u.uTwinkle.value = calm ? 0.28 : 1;
+        // На полной амплитуде две тысячи точек дышат вразнобой, и небо кипит —
+        // на статичном кадре это незаметно, а в движении читается как шум.
+        // Мерцание должно быть на грани восприятия, а не спецэффектом.
+        u.uTwinkle.value = calm ? 0.16 : 0.38;
       }
     }
 

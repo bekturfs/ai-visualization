@@ -46,6 +46,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { SMAAPass } from "three/addons/postprocessing/SMAAPass.js";
 
 import { QUALITY } from "../config";
 import { clamp, clamp01, damp } from "../num";
@@ -191,6 +192,23 @@ function createRig(
   );
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
+
+  // Сглаживание — последним, уже по картинке в sRGB.
+  //
+  // У холста `antialias: false`, и это правильно: композер рисует в свои
+  // таргеты, MSAA холста до них всё равно не доходит, а память ест. Но сцена
+  // почти целиком состоит из тонких ярких линий на чёрном — разметка, отбойник,
+  // световые следы, — и без сглаживания их края в движении кипят. Тот самый
+  // «шум»: не зерно, а лесенки, переползающие с пикселя на пиксель каждый кадр.
+  //
+  // SMAA, а не FXAA: FXAA размывает мелкие яркие точки, а у нас всё небо из них.
+  //
+  // Ставим на обоих пресетах с постобработкой, включая «обычно»: лесенки на
+  // мониторе с dpr 1 заметнее всего, а рядом с bloom, который и так держит
+  // одиннадцать таргетов, три прохода SMAA — небольшая добавка. Освобождать
+  // отдельно не нужно: `disposeRig` обходит все проходы композера, а
+  // `SMAAPass.dispose` разбирает свои таргеты, текстуры и материалы сам.
+  composer.addPass(new SMAAPass());
 
   // −1 во всех трёх полях — «ещё ничего не применяли»: `resizeRig` обязан
   // отработать хотя бы раз. Это же и защита от нулевого холста: композер взял
