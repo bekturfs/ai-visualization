@@ -24,6 +24,8 @@
  *
  * Слои (каждый — свой меш, проход по строкам общий): обочины, тёмный асфальт,
  * продольные мокрые блики, двойная осевая и краевые линии, отбойники.
+ * Поверх них лежит пул отражений — смазы источников света, привязанные к тому,
+ * что над ними висит (см. раздел «отражения на мокром асфальте»).
  * Всё на MeshBasicMaterial: настоящего света в сцене нет, есть свечение и bloom,
  * поэтому яркому выставлен `toneMapped: false`.
  *
@@ -40,8 +42,8 @@
 import * as THREE from "three";
 
 import type { RenderCtx, System } from "../ctx";
-import type { Game, Quality } from "../types";
-import { COLORS, FOG, QUALITY, ROAD, ROAD_LEN, TUNE } from "../config";
+import type { Game, Lamp, Quality } from "../types";
+import { COLORS, FOG, PHYS, QUALITY, ROAD, ROAD_LEN, TUNE } from "../config";
 import { roadPitch, roadX, roadY } from "../road";
 import { clamp, clamp01, smoothstep } from "../num";
 import { hash1 } from "../rng";
@@ -131,6 +133,86 @@ const STREAKS: readonly StreakSpec[] = [
   { x: 3.6, hw: 0.55, peak: 0.38, hex: COLORS.neonDeep, band: 0 },
   { x: 6.1, hw: 0.42, peak: 0.2, hex: COLORS.tail, band: 1 },
 ];
+
+/**
+ * Мокрые пятна вдоль трассы: функция от дистанции, а не от камеры. Её читают
+ * и продольные блики ленты, и отражения — иначе смаз мог бы загореться там,
+ * где полотно как раз сухое, и «мокро» перестало бы быть одним явлением.
+ */
+function wetAt(s: number): number {
+  return 0.5 + 0.3 * Math.sin(s * 0.021) + 0.2 * Math.sin(s * 0.0067 + 1.3);
+}
+
+/* ---------- отражения на мокром асфальте ---------- */
+
+/**
+ * Настоящего SSR здесь быть не может: нет ни prepass с глубиной и нормалями,
+ * ни бюджета на него — сцена уходит в композер одним проходом, а целевое
+ * железо включает телефоны. Поэтому отражение подделывается ровно так, как это
+ * делает сам референс: под каждым источником света лежит **глянцевый смаз** —
+ * полоса, которая начинается под источником, тянется к камере, расширяется и
+ * гаснет. Шероховатый мокрый асфальт даёт именно смаз, а не зеркало, так что
+ * подделка совпадает с физикой лучше, чем зеркальное отражение.
+ *
+ * Смаз — инстанс единичного квада, положенного на полотно, с текстурой-альфой
+ * (градиент вдоль, гаусс поперёк) и аддитивным блендингом. Цвет — в
+ * `instanceColor`, то есть цвет источника.
+ */
+
+/** Высота слоя: над асфальтом, но под разметкой. */
+const REFL_Y = 0.014;
+const REFL_ORDER = 1;
+
+/**
+ * Дальность и число слотов по пресету качества. На нуле пул не строится вовсе
+ * (ни текстуры, ни материала, ни инстансов), на единице — вдвое короче и
+ * вдвое меньше.
+ */
+const REFL_FAR: readonly number[] = [0, 130, 210];
+const REFL_SLOTS: readonly number[] = [0, 14, 30];
+
+/** Ближе этого источник уже над капотом: смаз целиком за камерой. */
+const REFL_NEAR = 2;
+/** Полоса набирает силу не мгновенно — иначе фонарь вспыхивает, пролетая мимо. */
+const REFL_IN = 20;
+/** Ниже этой яркости слот тратить незачем. */
+const REFL_EPS = 0.012;
+
+/** Длина смаза, м: база и прибавка на полной скорости. */
+const REFL_LEN = 26;
+const REFL_LEN_SPEED = 12;
+
+/**
+ * Куда класть отражение фонаря по горизонтали. Голова висит над самой кромкой
+ * (`ROAD.railX + 1.15 − 2.9` ≈ 6.65 м), но блик на плоскости всегда смещён от
+ * источника к наблюдателю: смотрящий видит его ближе к себе, а не под лампой.
+ * Поэтому полоса сдвинута внутрь полотна — туда же, где лежит световое пятно.
+ */
+const REFL_LAMP_X = 5.9;
+/** Ширина смаза у источника, м. Расширение к камере зашито в текстуру. */
+const REFL_LAMP_W = 3.2;
+/** Ширина смаза машины по `CarKind`: седан, фургон, фура. */
+const REFL_CAR_W: readonly number[] = [2, 2.3, 2.9];
+
+/**
+ * Усиления. Держатся заведомо ниже порога bloom (0.8 в линейном HDR): отражение
+ * обязано оставаться подложкой под источником, а не вторым источником. Пик
+ * альфы у текстуры около 0.84, дальше всё режут затухания, так что на экране
+ * вклад редко превышает четверть.
+ */
+const REFL_GAIN_LAMP = 0.5;
+const REFL_GAIN_TAIL = 0.6;
+const REFL_GAIN_HEAD = 0.46;
+
+/**
+ * Мокрая краска даёт свой смаз, и он затягивает разрывы прерывистой: на мокрой
+ * дороге разделительная читается сплошной полосой, а не пунктиром. Это дёшево
+ * (данные уже есть в этом файле), но заметно, поэтому только на качестве 2 и
+ * совсем тихо.
+ */
+const REFL_DASH_N = 4;
+const REFL_DASH_W = 0.75;
+const REFL_DASH_GAIN = 0.14;
 
 /* ---------- скретч кадра ---------- */
 
@@ -427,6 +509,62 @@ function unitQuad(): THREE.PlaneGeometry {
   return geom;
 }
 
+/* ---------- текстура смаза ---------- */
+
+/**
+ * Альфа-профиль отражения, 32 × 128, рисуется в canvas на старте (ассетов в
+ * проекте нет и не будет). Цвет белый — тон приходит из `instanceColor`.
+ *
+ * Ориентация: `CanvasTexture` переворачивает Y, поэтому нулевая строка картинки
+ * приходится на `v = 1`, а квад развёрнут так, что `v = 1` смотрит от камеры.
+ * То есть верх картинки — это конец под источником, и он самый яркий.
+ */
+function smearTex(): THREE.CanvasTexture | null {
+  if (typeof document === "undefined") return null;
+  const w = 32;
+  const h = 128;
+  const cv = document.createElement("canvas");
+  cv.width = w;
+  cv.height = h;
+  const c2d = cv.getContext("2d");
+  if (!c2d) return null;
+
+  const img = c2d.createImageData(w, h);
+  const d = img.data;
+  for (let y = 0; y < h; y++) {
+    // t: 0 под источником, 1 у ближнего к камере конца полосы.
+    const t = y / (h - 1);
+    // Экспоненциальный хвост и мягкие срезы на обоих концах квада: без них на
+    // аддитивном блендинге видно прямой шов поперёк дороги.
+    const along =
+      Math.exp(-t * 2.9) * smoothstep(1, 0.78, t) * smoothstep(0, 0.06, t);
+    // К камере смаз разъезжается — так ведёт себя шероховатый глянец.
+    const spread = 1 + 1.7 * t;
+    for (let x = 0; x < w; x++) {
+      const u = ((x + 0.5) / w - 0.5) * 2;
+      const uu = u / spread;
+      const a =
+        along * Math.exp(-uu * uu * 4.2) * smoothstep(1, 0.55, u < 0 ? -u : u);
+      const i = (y * w + x) * 4;
+      d[i] = 255;
+      d[i + 1] = 255;
+      d[i + 2] = 255;
+      d[i + 3] = Math.round(clamp01(a) * 255);
+    }
+  }
+  c2d.putImageData(img, 0, 0);
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  return tex;
+}
+
 /* ---------- сборка ---------- */
 
 function buildWorld(quality: Quality) {
@@ -656,6 +794,36 @@ function buildWorld(quality: Quality) {
 
   group.add(dashes, studs);
 
+  /* --- пул отражений: своя текстура, значит и свой материал --- */
+
+  const reflSlots = REFL_SLOTS[quality];
+  const reflTex = reflSlots > 0 ? smearTex() : null;
+  let reflect: THREE.InstancedMesh | null = null;
+  if (reflTex) {
+    const matRefl = new THREE.MeshBasicMaterial({
+      map: reflTex,
+      // Без `vertexColors` шейдер игнорирует `instanceColor` — та же причина,
+      // что и у `unitQuad`, поэтому пул сидит на той же геометрии.
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    });
+    mats.push(matRefl);
+
+    reflect = new THREE.InstancedMesh(quad, matRefl, reflSlots);
+    reflect.frustumCulled = false;
+    reflect.renderOrder = REFL_ORDER;
+    reflect.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    for (let i = 0; i < reflSlots; i++) {
+      reflect.setMatrixAt(i, _m4);
+      reflect.setColorAt(i, _col);
+    }
+    reflect.count = 0;
+    group.add(reflect);
+  }
+
   return {
     group,
     ribbons,
@@ -665,6 +833,17 @@ function buildWorld(quality: Quality) {
     streaks,
     dashes,
     studs,
+    reflect,
+    reflTex,
+    reflSlots: reflect ? reflSlots : 0,
+    reflFar: REFL_FAR[quality],
+    reflDash: quality >= 2,
+    reflMR: { start: 0, count: 0 },
+    reflCR: { start: 0, count: 0 },
+    reflLamp: linear(COLORS.lampGlow),
+    reflTail: linear(COLORS.tail),
+    reflHead: linear(COLORS.head),
+    reflMark: linear(COLORS.markSide),
     /* Размеры и дальности, снятые с пресета качества на сборке. */
     segs,
     gridStep,
@@ -726,7 +905,7 @@ function rebuildGrid(w: RoadWorld, base: number, step: number, rows: number) {
     const dw = (i - 1) * step - lag - WIDEN_FROM;
     w.rowWide[i] = dw > 0 ? dw * WIDEN_RATE : 0;
 
-    w.rowWet[i] = 0.5 + 0.3 * Math.sin(s * 0.021) + 0.2 * Math.sin(s * 0.0067 + 1.3);
+    w.rowWet[i] = wetAt(s);
 
     for (let b = 0; b < BANDS; b++) {
       const ph = BAND_PHASE[b];
@@ -748,8 +927,147 @@ function rebuildGrid(w: RoadWorld, base: number, step: number, rows: number) {
 
 /* ---------- система ---------- */
 
-export function createRoad(ctx: RenderCtx): System {
+/**
+ * Источники отражений, которых дорога знать не может: фонари стоят в другой
+ * системе, а импортировать её нельзя. Зависимость инвертирована так же, как у
+ * `TerrainDeps` и `LightsDeps`, и оставлена **необязательной**: без неё дорога
+ * отражает только то, что видит сама (машины из `Game` и собственную краску).
+ */
+export interface RoadDeps {
+  /** Обход фонарей в [s0, s1]; `cb` получает один переиспользуемый объект. */
+  lamps: (s0: number, s1: number, cb: (l: Lamp) => void) => void;
+}
+
+/** Состояние обхода источников. Живёт между кадрами: замыкание на кадр — аллокация. */
+interface ReflWalk {
+  n: number;
+  camS: number;
+  camX: number;
+  camRX: number;
+  camRY: number;
+  len: number;
+}
+
+export function createRoad(ctx: RenderCtx, deps?: RoadDeps): System {
   const w = buildWorld(ctx.quality);
+
+  const refl: ReflWalk = { n: 0, camS: 0, camX: 0, camRX: 0, camRY: 0, len: REFL_LEN };
+
+  /**
+   * Положить один смаз: от источника на дистанции `s` к камере. Возвращает
+   * ничего — переполнение пула и слишком тусклые полосы просто отбрасываются,
+   * причём отбрасываются по яркости, так что первыми уходят дальние.
+   */
+  function addRefl(
+    s: number,
+    lane: number,
+    width: number,
+    len: number,
+    rgb: RGB,
+    gain: number,
+  ): void {
+    const mesh = w.reflect;
+    if (!mesh || refl.n >= w.reflSlots) return;
+    const far = w.reflFar;
+    const d = s - refl.camS;
+    if (d < REFL_NEAR || d > far) return;
+
+    // Дальний конец обязан быть тусклым: засветку у горизонта из этого кадра
+    // один раз уже выводили, и возвращать её отражениями было бы издевательством.
+    const f =
+      gain *
+      smoothstep(far, far * 0.34, d) *
+      smoothstep(REFL_NEAR, REFL_IN, d) *
+      (0.4 + 0.6 * clamp01(wetAt(s)));
+    if (f < REFL_EPS) return;
+
+    // Полоса лежит на [s − len, s], значит её центр на полдлины ближе к камере.
+    const sc = s - len * 0.5;
+    const i = refl.n++;
+    // Квад кладётся плашмя и доворачивается на уклон — как штрихи разметки.
+    // Локальный +Y после поворота смотрит в −Z, то есть дальний край квада
+    // приходится ровно под источник.
+    _m4.makeRotationX(-Math.PI * 0.5 + roadPitch(sc));
+    _sc.set(width, len, 1);
+    _m4.scale(_sc);
+    _m4.setPosition(
+      roadX(sc) - refl.camRX - refl.camX + lane,
+      roadY(sc) - refl.camRY + REFL_Y,
+      refl.camS - sc,
+    );
+    mesh.setMatrixAt(i, _m4);
+    _col.setRGB(rgb.r * f, rgb.g * f, rgb.b * f);
+    mesh.setColorAt(i, _col);
+  }
+
+  function onLamp(l: Lamp): void {
+    addRefl(
+      l.s,
+      l.side * REFL_LAMP_X,
+      REFL_LAMP_W,
+      refl.len,
+      w.reflLamp,
+      REFL_GAIN_LAMP,
+    );
+  }
+
+  /**
+   * Собрать кадр отражений. Порядок обхода — от самых нужных к необязательным:
+   * фонари, потом трафик, потом собственная краска. Если слоты кончатся, уйдёт
+   * то, что стоит последним, а не случайное.
+   */
+  function drawReflections(g: Game, camS: number, camX: number, camRX: number, camRY: number) {
+    const mesh = w.reflect;
+    if (!mesh) return;
+    if (g.quality < 1) {
+      mesh.count = 0;
+      return;
+    }
+
+    refl.n = 0;
+    refl.camS = camS;
+    refl.camX = camX;
+    refl.camRX = camRX;
+    refl.camRY = camRY;
+    // На скорости смаз вытягивается. Скорость движок уже сглаживает, поэтому
+    // своего демпфера тут не нужно, и от частоты кадров это не зависит.
+    refl.len = REFL_LEN + REFL_LEN_SPEED * clamp01(g.speed / PHYS.speedMax);
+
+    if (deps) deps.lamps(camS, camS + w.reflFar, onLamp);
+
+    // Машины дорога берёт прямо из `Game` — отдельная зависимость для них не
+    // нужна, а огни у них те же, что рисует трафик: красные сзади, белые в лоб.
+    const cars = g.cars;
+    for (let k = 0; k < cars.length; k++) {
+      const c = cars[k];
+      if (!c.active) continue;
+      const onc = c.oncoming || c.speed < 0;
+      addRefl(
+        c.s,
+        c.lane,
+        REFL_CAR_W[c.kind],
+        refl.len,
+        onc ? w.reflHead : w.reflTail,
+        onc ? REFL_GAIN_HEAD : REFL_GAIN_TAIL,
+      );
+    }
+
+    // Мокрая краска: штрих разделительной тоже смазывается, и смаз длиной в
+    // период затягивает разрыв — прерывистая читается сплошной, как в кадре
+    // референса. Только на качестве 2 и только у ближних штрихов.
+    if (w.reflDash) {
+      const base = Math.floor(camS / DASH_PERIOD) * DASH_PERIOD + ROAD.dashLen * 0.5;
+      for (let k = 0; k < REFL_DASH_N; k++) {
+        const s = base + k * DASH_PERIOD;
+        addRefl(s, -DASH_X, REFL_DASH_W, DASH_PERIOD, w.reflMark, REFL_DASH_GAIN);
+        addRefl(s, DASH_X, REFL_DASH_W, DASH_PERIOD, w.reflMark, REFL_DASH_GAIN);
+      }
+    }
+
+    mesh.count = refl.n;
+    markRange(mesh.instanceMatrix, w.reflMR, refl.n * 16);
+    if (mesh.instanceColor) markRange(mesh.instanceColor, w.reflCR, refl.n * 3);
+  }
 
   return {
     object: w.group,
@@ -795,6 +1113,7 @@ export function createRoad(ctx: RenderCtx): System {
 
       drawDashes(w, camS, camX, camRX, camRY);
       drawStuds(w, g, camS, camX, camRX, camRY);
+      drawReflections(g, camS, camX, camRX, camRY);
     },
 
     dispose() {
@@ -805,6 +1124,9 @@ export function createRoad(ctx: RenderCtx): System {
       // У InstancedMesh свои буферы матриц и цветов — геометрия их не освобождает.
       w.dashes.dispose();
       w.studs.dispose();
+      w.reflect?.dispose();
+      // Текстура смаза — единственная в системе, и она не принадлежит геометрии.
+      w.reflTex?.dispose();
     },
   };
 }

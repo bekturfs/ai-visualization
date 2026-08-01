@@ -5,11 +5,13 @@
 // значит их можно втянуть внутрь и получить файл, который играется откуда
 // угодно: с флешки, из вложения, из статического хостинга без настройки.
 //
-// Запуск: npm run build && npm run single   →   dist/starry-ride.html
+// Запуск: npm run single   →   dist-single/starry-ride.html
 import { readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-const DIST = new URL("../dist/", import.meta.url).pathname;
+// Читаем сборку из dist-single: у неё inlineDynamicImports, то есть физика
+// внутри общего скрипта, а не в отдельном чанке, который файлу неоткуда взять.
+const DIST = new URL("../dist-single/", import.meta.url).pathname;
 const ASSETS = join(DIST, "assets");
 
 const files = readdirSync(ASSETS);

@@ -240,7 +240,7 @@ function buildSystems(): void {
     createSky(ctx),
     createTerrain(ctx, { trees: forEachTree, ridge: ridgeHeight }),
     createLights(ctx, { lamps: forEachLamp, town: forEachTownLight }),
-    createRoad(ctx),
+    createRoad(ctx, { lamps: forEachLamp }),
     createTraffic(ctx),
     createPickups(ctx),
     // Искры и пыль — поверх трафика и бонусов: они аддитивные и должны ложиться
@@ -363,14 +363,17 @@ function frame(now: number): void {
   // (а он весит больше всей остальной сборки), её просто нет — и это нормально.
   physics?.update(g, dt);
   audio.current?.update(g, dt);
-  // Очередь событий разбирают все желающие в этом же кадре, чистит её владелец.
-  if (g.events.length) g.events.length = 0;
   // Фазу меняет и сам кадр: авария и конец заезда рождаются внутри `step`, и
   // ждать тика таймера здесь нельзя — экран опоздает, а рекорд может не записаться.
   if (g.phase !== phaseBefore) pushSnap();
 
   for (const s of systems) s.update(g, dt, ctx);
   for (const o of overlays) o.frame?.(g, dt);
+
+  // Очередь событий чистится ПОСЛЕ всех, кто её читает, — а читают её и звук, и
+  // физика, и частицы. Пока она чистилась сразу после звука, искры от задира не
+  // появлялись вовсе: система частиц опрашивала уже пустой список.
+  if (g.events.length) g.events.length = 0;
 
   if (effects && effects.active) effects.render();
   else renderer.render(scene, camera);
