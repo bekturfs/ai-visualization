@@ -49,6 +49,7 @@ import { createTerrain } from "./game/systems/terrain";
 import { createLights } from "./game/systems/lights";
 import { createTraffic } from "./game/systems/traffic";
 import { createPickups } from "./game/systems/pickups";
+import { createParticles } from "./game/systems/particles";
 import { createRig } from "./game/systems/rig";
 import { createEffects, type EffectsSystem } from "./game/systems/effects";
 
@@ -242,6 +243,9 @@ function buildSystems(): void {
     createRoad(ctx),
     createTraffic(ctx),
     createPickups(ctx),
+    // Искры и пыль — поверх трафика и бонусов: они аддитивные и должны ложиться
+    // на уже нарисованное, а не под него.
+    createParticles(ctx),
     fx,
   ];
   for (const s of systems) if (s.object) scene.add(s.object);
