@@ -37,11 +37,11 @@ npm run build                          # должно проходить чис�
 
 - [x] 0. Разобрать референс (кадры рила, палитра, что именно цитируем)
 - [x] 1. Документы-хендофф: `CLAUDE.md`, `docs/GAME.md`, `PROGRESS.md`
-- [ ] 2. Ядро-контракт: `src/game/types.ts`, `config.ts`, `rng.ts`, `road.ts`
-- [ ] 3. Логика: `worldGen.ts`, `engine.ts`, `input.ts`, `audio.ts`
-- [ ] 4. Сцена: `scene/Sky.tsx`, `Road.tsx`, `Terrain.tsx`, `Traffic.tsx`, `Pickups.tsx`,
-      `Effects.tsx`, `Rig.tsx`
-- [ ] 5. Оверлеи: `ui/Dashboard.tsx` (SVG-кабина), `ui/Hud.tsx`, `ui/Screens.tsx`
+- [x] 2. Ядро-контракт: `src/game/types.ts`, `config.ts`, `rng.ts`, `road.ts`, `num.ts`
+- [x] 3. Логика: `worldGen.ts`, `engine.ts`, `input.ts`, `audio.ts`
+- [x] 4. Сцена: `scene/Sky.tsx`, `Road.tsx`, `Terrain.tsx`, `Lights.tsx`, `Traffic.tsx`,
+      `Pickups.tsx`, `Effects.tsx`, `Rig.tsx`
+- [x] 5. Оверлеи: `ui/Dashboard.tsx` (SVG-кабина), `ui/Hud.tsx`, `ui/Screens.tsx`
 - [x] 6. Сборка страницы: `src/Ride.tsx` + `src/main.tsx` (написана заранее под
       зафиксированные сигнатуры; свести с реальными модулями)
 - [x] 7. `npm run build` проходит чисто; `scripts/ride-shoot.mjs` играет заезд в
