@@ -49,8 +49,16 @@ async function openPage(viewport) {
   return page;
 }
 
+// В headless нет видеокарты, всё рисует SwiftShader, и кадр может занимать сотни
+// миллисекунд. Поэтому таймаут щедрый, а ожидание шрифтов выключено — оно висло.
 const shot = (page, name) =>
-  page.screenshot({ path: `${OUT}/${name}.png` }).then(() => console.log("shot:", name));
+  page
+    .screenshot({ path: `${OUT}/${name}.png`, timeout: 90_000, animations: "disabled" })
+    .then(() => console.log("shot:", name))
+    .catch((e) => {
+      problems.push(`SHOT ${name}: ${String(e).split("\n")[0]}`);
+      console.log("shot FAILED:", name);
+    });
 
 /** Средний FPS за `ms` миллисекунд, замеренный внутри страницы. */
 function measureFps(page, ms) {
@@ -99,7 +107,7 @@ const press = async (page, code, ms) => {
 /* ---------------- десктоп ---------------- */
 
 const page = await openPage({ width: 1380, height: 860 });
-await page.goto(`${BASE}/#/ride`, { waitUntil: "networkidle" });
+await page.goto(BASE, { waitUntil: "networkidle" });
 await page.waitForTimeout(2500);
 await shot(page, "01-menu");
 
@@ -115,12 +123,17 @@ const gl = await page.evaluate(() => {
 console.log("webgl:", gl);
 if (gl.startsWith("НЕТ")) problems.push("WEBGL: " + gl);
 
-// старт заезда
-const startBtn = page.getByRole("button", { name: /поехали/i });
+// Старт именно кнопкой в диалоге: клавиатурный путь проверяется отдельно, а
+// клик по кнопке уже один раз молча ломался (захват указателя съедал mouseup).
+const startBtn = page.getByRole("dialog").getByRole("button", { name: /поехали/i });
 if (await startBtn.count()) await startBtn.first().click();
 else {
-  problems.push("UI: кнопки «поехали» нет — стартую с клавиатуры");
+  problems.push("UI: кнопки «поехали» в диалоге нет — стартую с клавиатуры");
   await page.keyboard.press("Enter");
+}
+await page.waitForTimeout(600);
+if ((await probe(page))?.phase !== "playing") {
+  problems.push("UI: клик по «поехали» не запустил заезд");
 }
 await page.waitForTimeout(1800);
 await shot(page, "02-drive");
@@ -172,10 +185,10 @@ console.log("state (после таранов):", JSON.stringify(await probe(pag
 /* ---------------- мобильный портрет ---------------- */
 
 const m = await openPage({ width: 390, height: 844 });
-await m.goto(`${BASE}/#/ride`, { waitUntil: "networkidle" });
+await m.goto(BASE, { waitUntil: "networkidle" });
 await m.waitForTimeout(2500);
 await shot(m, "20-mobile-menu");
-const mStart = m.getByRole("button", { name: /поехали/i });
+const mStart = m.getByRole("dialog").getByRole("button", { name: /поехали/i });
 if (await mStart.count()) await mStart.first().click();
 await m.waitForTimeout(2500);
 await shot(m, "21-mobile-drive");
@@ -187,13 +200,6 @@ const overflow = await m.evaluate(
   () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
 );
 if (overflow > 1) problems.push(`ВЁРСТКА: горизонтальная прокрутка ${overflow}px на 390px`);
-
-/* ---------------- остальные страницы не сломались? ---------------- */
-
-const home = await openPage({ width: 1380, height: 860 });
-await home.goto(`${BASE}/#/`, { waitUntil: "networkidle" });
-await home.waitForTimeout(1200);
-await shot(home, "30-home");
 
 console.log("\nПРОБЛЕМЫ:", problems.length ? problems : "нет");
 await browser.close();

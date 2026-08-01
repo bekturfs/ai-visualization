@@ -44,8 +44,10 @@ function readStore(): { best: number; muted: boolean; quality: Quality } {
   try {
     out.best = Number(localStorage.getItem(STORE.best)) || 0;
     out.muted = localStorage.getItem(STORE.muted) === "1";
-    const q = Number(localStorage.getItem(STORE.quality));
-    if (q === 0 || q === 1 || q === 2) out.quality = q;
+    // Именно так, а не Number(...): getItem даёт null, а Number(null) === 0 —
+    // и настройка «экономно» молча включалась бы всем при первом запуске.
+    const raw = localStorage.getItem(STORE.quality);
+    if (raw === "0" || raw === "1" || raw === "2") out.quality = Number(raw) as Quality;
   } catch {
     /* приватный режим — играем с настройками по умолчанию */
   }
