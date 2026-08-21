@@ -329,7 +329,7 @@ function ItemRow({
 
       <div className="mt-2 flex gap-2">
         <Btn
-          className="w-11 px-0"
+          className="w-11 shrink-0"
           ariaLabel="переместить выше"
           title="выше"
           disabled={idx === 0}
@@ -338,7 +338,7 @@ function ItemRow({
           ↑
         </Btn>
         <Btn
-          className="w-11 px-0"
+          className="w-11 shrink-0"
           ariaLabel="переместить ниже"
           title="ниже"
           disabled={idx === total - 1}
@@ -350,7 +350,7 @@ function ItemRow({
           заменить
         </Btn>
         <Btn
-          className="w-11 px-0"
+          className="w-11 shrink-0"
           variant="danger"
           ariaLabel={`убрать ${ex.name} из дня`}
           title="убрать из дня"
@@ -398,7 +398,7 @@ function DayCard({ day }: { day: PlanDay }) {
           />
         </div>
         <Btn
-          className="mt-5 w-11 shrink-0 px-0"
+          className="mt-5 w-11 shrink-0"
           variant="danger"
           ariaLabel={`удалить день «${day.name}»`}
           title="удалить день"

@@ -75,7 +75,7 @@ function WeeklyChart({ weeks }: { weeks: WeekBucket[] }) {
                 x={cx}
                 y={y - 4}
                 textAnchor="middle"
-                fontSize="8"
+                fontSize="9"
                 className="fill-soft"
               >
                 {fmtTonnage(w.tonnage)}
@@ -85,7 +85,7 @@ function WeeklyChart({ weeks }: { weeks: WeekBucket[] }) {
               x={cx}
               y={W_LABEL_Y}
               textAnchor="middle"
-              fontSize="8"
+              fontSize="9"
               className={w.tonnage > 0 ? "fill-muted" : "fill-faint"}
             >
               {w.label}
@@ -287,10 +287,10 @@ function WeightChart({ pts }: { pts: ExPoint[] }) {
         y2={L_BOTTOM}
         className="stroke-edge"
       />
-      <text x={L_LEFT - 4} y={L_TOP + 3} textAnchor="end" fontSize="8" className="fill-faint">
+      <text x={L_LEFT - 4} y={L_TOP + 3} textAnchor="end" fontSize="9" className="fill-faint">
         {Math.round(hi)}
       </text>
-      <text x={L_LEFT - 4} y={L_BOTTOM + 3} textAnchor="end" fontSize="8" className="fill-faint">
+      <text x={L_LEFT - 4} y={L_BOTTOM + 3} textAnchor="end" fontSize="9" className="fill-faint">
         {Math.round(lo)}
       </text>
 
@@ -318,10 +318,10 @@ function WeightChart({ pts }: { pts: ExPoint[] }) {
         {fmtWeight(maxW)}
       </text>
 
-      <text x={L_LEFT} y="120" textAnchor="start" fontSize="8" className="fill-faint">
+      <text x={L_LEFT} y="120" textAnchor="start" fontSize="9" className="fill-faint">
         {shortDate(pts[0].ts)}
       </text>
-      <text x={L_RIGHT} y="120" textAnchor="end" fontSize="8" className="fill-faint">
+      <text x={L_RIGHT} y="120" textAnchor="end" fontSize="9" className="fill-faint">
         {shortDate(pts[pts.length - 1].ts)}
       </text>
     </svg>
@@ -392,8 +392,9 @@ function WeightBlock() {
               {plural(pts.length, ["тренировка", "тренировки", "тренировок"])}
             </Pill>
             <Pill tone={delta > 0 ? "ok" : delta < 0 ? "amber" : "muted"}>
-              {delta > 0 ? "+" : delta < 0 ? "−" : "±"}
-              {fmtWeight(Math.abs(delta))} с начала
+              {delta === 0
+                ? "вес не менялся"
+                : `${delta > 0 ? "+" : "−"}${fmtWeight(Math.abs(delta))} с начала`}
             </Pill>
           </div>
           <p className="text-xs text-muted">

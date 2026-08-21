@@ -141,8 +141,9 @@ export default function History() {
         <SectionTitle>журнал</SectionTitle>
         <p className="text-sm text-muted">
           {list.length}{" "}
-          {plural(list.length, ["тренировка", "тренировки", "тренировок"])}, суммарно{" "}
-          {fmtTonnage(totalVol)}. нажми на строку — раскроется разбор.
+          {plural(list.length, ["тренировка", "тренировки", "тренировок"])}
+          {totalVol > 0 ? `, суммарно ${fmtTonnage(totalVol)}` : ""}. нажми на
+          строку — раскроется разбор.
         </p>
       </div>
 

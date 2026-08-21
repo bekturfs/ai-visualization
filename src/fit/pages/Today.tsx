@@ -8,7 +8,6 @@ import {
   Btn,
   Card,
   Empty,
-  Pill,
   SectionTitle,
   Sheet,
   daysAgo,
@@ -101,11 +100,11 @@ export default function Today() {
     return (
       <div className="space-y-4">
         <Card className="p-4">
-          <div className="flex items-center gap-2">
-            <Pill tone="ok">идёт тренировка</Pill>
-            <span className="font-mono text-sm text-muted">
+          <div className="flex items-baseline gap-2">
+            <span className="font-mono text-2xl text-ok">
               {fmtDuration(secs)}
             </span>
+            <span className="text-sm text-muted">тренировка идёт</span>
           </div>
           <h1 className="mt-2 text-xl font-semibold text-ink">
             {active.dayName}
