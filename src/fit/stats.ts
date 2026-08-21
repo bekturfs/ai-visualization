@@ -84,7 +84,8 @@ export function deltBalance(
   days = 30,
 ): DeltBalance {
   const from = Date.now() - days * DAY;
-  const byId = new Map(allExercises(state).map((e) => [e.id, e]));
+  // с архивными: удалённое своё упражнение всё равно грузило дельты
+  const byId = new Map(allExercises(state, true).map((e) => [e.id, e]));
   const out: DeltBalance = { front: 0, side: 0, rear: 0 };
   for (const ses of sessions) {
     if (ses.startedAt < from) continue;

@@ -228,6 +228,7 @@ export default function Session() {
         )}
 
         <SessionSummary
+          hideNote
           session={active}
           compareTo={previousSameDay(state.sessions, active)}
         />
@@ -468,13 +469,16 @@ export default function Session() {
       />
 
       <Btn
-        variant={entry.done ? "ghost" : "ok"}
+        variant="ok"
         size="lg"
         className="w-full"
-        disabled={entry.done}
         onClick={() => finishEntry(idx)}
       >
-        {entry.done ? "упражнение готово ✓" : "Упражнение готово"}
+        {entry.done && idx < total - 1
+          ? "Дальше: следующее упражнение →"
+          : entry.done
+            ? "Упражнение готово ✓"
+            : "Упражнение готово"}
       </Btn>
 
       <div className="flex gap-2">

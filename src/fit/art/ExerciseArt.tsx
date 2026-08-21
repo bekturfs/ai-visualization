@@ -36,7 +36,11 @@ export function ExerciseArt({
 function Photos({ ex }: { ex: Exercise }) {
   const urls = photoUrls(ex.photo);
   const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [ex.id]);
+  const [loaded, setLoaded] = useState(0);
+  useEffect(() => {
+    setFailed(false);
+    setLoaded(0);
+  }, [ex.id]);
   if (!urls || failed) {
     return (
       <p className="text-sm text-muted">
@@ -53,6 +57,7 @@ function Photos({ ex }: { ex: Exercise }) {
               src={u}
               alt={`${ex.name}: ${i === 0 ? "начало" : "конец"} движения`}
               loading="lazy"
+              onLoad={() => setLoaded((n) => n + 1)}
               onError={() => setFailed(true)}
               referrerPolicy="no-referrer"
               className="aspect-4/3 w-full bg-panel2 object-cover"
@@ -64,7 +69,9 @@ function Photos({ ex }: { ex: Exercise }) {
         ))}
       </div>
       <p className="mt-2 text-xs text-faint">
-        Фото из открытой базы free-exercise-db (CC0), грузятся из интернета.
+        {loaded < urls.length
+          ? "Загружаю фотографии… если интернета нет, останется схема движения."
+          : "Фото из открытой базы free-exercise-db (CC0), грузятся из интернета."}
       </p>
     </div>
   );

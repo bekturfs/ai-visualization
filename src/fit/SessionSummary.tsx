@@ -19,9 +19,12 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 export function SessionSummary({
   session,
   compareTo,
+  hideNote,
 }: {
   session: Session;
   compareTo?: Session | null;
+  /** На экране завершения заметку правят полем ниже — дубль здесь не нужен. */
+  hideNote?: boolean;
 }) {
   const state = useFit((s) => s);
   // у незавершённой тренировки счётчик должен идти, а не застыть на рендере
@@ -97,7 +100,7 @@ export function SessionSummary({
         })}
       </ul>
 
-      {session.note && (
+      {session.note && !hideNote && (
         <div className="rounded-xl border border-edge bg-panel px-3 py-2 text-sm text-soft">
           {session.note}
         </div>

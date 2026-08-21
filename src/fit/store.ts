@@ -157,6 +157,7 @@ function normalize(parsed: unknown): State {
           }
         : { sets: 3, reps: "8–12", rest: 90 },
       custom: true,
+      archived: bool(e.archived, false),
     })),
     videos,
     sessions: arr(parsed.sessions).map(normSession),
@@ -237,12 +238,29 @@ export function useFit<T>(selector: (s: State) => T): T {
 
 // ───────────────────────── упражнения ─────────────────────────
 
-export function allExercises(s: State = state): Exercise[] {
-  return [...EXERCISES, ...s.customEx];
+// список склеивается на каждый рендер, а страницы держат на нём useMemo —
+// без кэша по ссылке на customEx мемоизация не работала бы вовсе
+// два слота: exById ходит с архивными, страницы — без, и один общий слот
+// сбрасывался бы на каждом вызове
+const exCache: Record<"all" | "visible", { src: Exercise[]; out: Exercise[] } | null> = {
+  all: null,
+  visible: null,
+};
+
+/** Список для выбора: удалённые свои упражнения сюда не попадают. */
+export function allExercises(s: State = state, withArchived = false): Exercise[] {
+  const slot = withArchived ? "all" : "visible";
+  const hit = exCache[slot];
+  if (hit && hit.src === s.customEx) return hit.out;
+  const custom = withArchived ? s.customEx : s.customEx.filter((e) => !e.archived);
+  const out = [...EXERCISES, ...custom];
+  exCache[slot] = { src: s.customEx, out };
+  return out;
 }
 
+/** Поиск по id идёт и по удалённым: иначе в журнале вместо названия голый id. */
 export function exById(id: string, s: State = state): Exercise | undefined {
-  return allExercises(s).find((e) => e.id === id);
+  return allExercises(s, true).find((e) => e.id === id);
 }
 
 export function addCustomExercise(ex: Omit<Exercise, "id" | "custom">) {
@@ -255,7 +273,17 @@ export function addCustomExercise(ex: Omit<Exercise, "id" | "custom">) {
 
 export function removeCustomExercise(id: string) {
   update((s) => {
-    s.customEx = s.customEx.filter((e) => e.id !== id);
+    // если упражнение уже попало в историю, физически не удаляем — иначе
+    // в журнале вместо названия останется внутренний идентификатор
+    const inHistory = s.sessions.some((ses) =>
+      ses.entries.some((e) => e.exId === id),
+    );
+    if (inHistory) {
+      const ex = s.customEx.find((e) => e.id === id);
+      if (ex) ex.archived = true;
+    } else {
+      s.customEx = s.customEx.filter((e) => e.id !== id);
+    }
     s.plan.forEach((d) => {
       d.items = d.items.filter((it) => it.exId !== id);
     });
@@ -280,9 +308,16 @@ export function updateDay(dayId: string, patch: Partial<PlanDay>) {
 
 export function addDay() {
   update((s) => {
+    // берём первую свободную букву: после удаления среднего дня счёт по длине
+    // списка давал второй «День C»
+    const used = new Set(s.plan.map((d) => d.name));
+    let letter = 0;
+    while (letter < 26 && used.has(`День ${String.fromCharCode(65 + letter)}`)) {
+      letter += 1;
+    }
     s.plan.push({
       id: uid(),
-      name: `День ${String.fromCharCode(65 + s.plan.length)}`,
+      name: `День ${String.fromCharCode(65 + letter)}`,
       subtitle: "новый день",
       items: [],
     });

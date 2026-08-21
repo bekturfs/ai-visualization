@@ -113,8 +113,8 @@ setup and the color palette, and is not linked from the site navigation.
   a rest timer that starts itself; notes are recorded per exercise and per
   session.
 - **Illustrations without a network.** Each of the 40 exercises animates
-  between two poses as inline SVG, computed from joint angles in
-  `src/fit/art/motions.ts`. Photographs from the CC0
+  between two poses as inline SVG, computed from joint angles: 35 distinct
+  movements in `src/fit/art/motions.ts`, every one of them in use. Photographs from the CC0
   [free-exercise-db](https://github.com/yuhonas/free-exercise-db) and an
   optional user-supplied video are layered on top when online.
 

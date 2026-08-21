@@ -67,6 +67,9 @@ function DayItems({ day }: { day: PlanDay }) {
               <div className="text-xs text-muted">
                 {it.sets}×{it.reps} · отдых {fmtDuration(it.rest)}
               </div>
+              {it.note && (
+                <div className="truncate text-xs text-amber">{it.note}</div>
+              )}
             </div>
           </li>
         );

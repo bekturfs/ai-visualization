@@ -39,6 +39,8 @@ export type Exercise = {
   def: { sets: number; reps: string; rest: number };
   /** true у упражнений, добавленных руками. */
   custom?: boolean;
+  /** Своё упражнение удалили, но оно есть в истории — прячем, но имя храним. */
+  archived?: boolean;
 };
 
 export type PlanItem = {
