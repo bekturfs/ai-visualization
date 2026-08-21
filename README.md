@@ -89,11 +89,45 @@ src/
     FlowDots.tsx        — animated signal particles for SVG edges
     ui.tsx              — shared cards, sliders, buttons, animated numbers
   lib/                  — formatting and math helpers
+  fit/                  — personal workout tracker (see below)
 scripts/
   shoot.mjs             — Playwright screenshot sweep used for visual checks
+  shoot-fit.mjs         — same, for the tracker, at a phone viewport
+  fit-e2e.mjs           — end-to-end run of the tracker: log a workout, check it persists
 ```
 
 Each page follows the same pattern: a guided story (steps highlight parts of the scene and trigger animations) → a sandbox with live computation → hands-on challenges that check themselves.
+
+## Workout tracker
+
+The repository also hosts an unrelated personal app at `#/fit` — a workout
+tracker built for a shoulder-focused routine of three sessions a week, five
+exercises each. It shares nothing with the visualizations except the build
+setup and the color palette, and is not linked from the site navigation.
+
+- **Local only.** Everything lives in `localStorage`; there is no backend and
+  no account. Export/import JSON is the backup story.
+- **Editable program.** Days, exercises, sets, reps and rest are all editable;
+  the starting 3×5 program is a default, not a fixture.
+- **Per-set logging.** Weight, reps and optional RPE are recorded per set, with
+  a rest timer that starts itself; notes are recorded per exercise and per
+  session.
+- **Illustrations without a network.** Each of the 40 exercises animates
+  between two poses as inline SVG, computed from joint angles in
+  `src/fit/art/motions.ts`. Photographs from the CC0
+  [free-exercise-db](https://github.com/yuhonas/free-exercise-db) and an
+  optional user-supplied video are layered on top when online.
+
+```
+src/fit/
+  types.ts              — plan, sets, sessions, timer, settings
+  store.ts              — localStorage state, mutations, selectors
+  stats.ts              — weekly tonnage, delt balance, per-exercise history
+  data/exercises.ts     — 40 exercises: technique, mistakes, photo folders
+  data/program.ts       — the default 3×5 shoulder-focused program
+  art/                  — pose model, motion table, SVG figure renderer
+  pages/                — today, session, plan, library, history, progress, settings
+```
 
 ## License
 

@@ -2,3 +2,6 @@ node_modules/
 dist/
 *.local
 tsconfig.tsbuildinfo
+
+# состояние autopilot-пайплайна, в репозиторий не идёт
+.omc/

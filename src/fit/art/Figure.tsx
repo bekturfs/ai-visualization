@@ -245,7 +245,9 @@ function Cable({ from, to }: { from: Pt; to: Pt }) {
 
 function Band({ a, b }: { a: Pt; b: Pt }) {
   const mx = (a.x + b.x) / 2;
-  const my = (a.y + b.y) / 2 + 16;
+  // растянутая лента почти прямая, сведённая — провисает
+  const spanned = Math.hypot(b.x - a.x, b.y - a.y);
+  const my = (a.y + b.y) / 2 + Math.max(3, 26 - spanned * 0.18);
   return (
     <path
       d={`M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`}
@@ -348,16 +350,19 @@ function Env({ m }: { m: Motion }) {
       )}
       {has("dipBars") && (
         <g>
-          <line x1={44} y1={128} x2={156} y2={128} className="stroke-amber" strokeWidth={5} strokeLinecap="round" />
-          <line x1={52} y1={128} x2={52} y2={FLOOR} className={line} strokeWidth={4} />
-          <line x1={148} y1={128} x2={148} y2={FLOOR} className={line} strokeWidth={4} />
+          <line x1={34} y1={128} x2={80} y2={128} className="stroke-amber" strokeWidth={5} strokeLinecap="round" />
+          <line x1={124} y1={128} x2={170} y2={128} className="stroke-amber" strokeWidth={5} strokeLinecap="round" />
+          <line x1={42} y1={128} x2={42} y2={FLOOR} className={line} strokeWidth={4} />
+          <line x1={162} y1={128} x2={162} y2={FLOOR} className={line} strokeWidth={4} />
           <line x1={6} y1={FLOOR} x2={194} y2={FLOOR} className={line} strokeWidth={3} />
         </g>
       )}
       {has("sled") && (
         <g>
-          <rect x={132} y={22} width={54} height={13} rx={5} className="fill-amber/60" transform="rotate(26 158 30)" />
-          <rect x={30} y={150} width={110} height={12} rx={5} className={fill} />
+          {/* платформа стоит перпендикулярно выпрямленной ноге */}
+          <rect x={150} y={72} width={13} height={58} rx={5} className="fill-amber/60" transform="rotate(-22 156 101)" />
+          <rect x={26} y={136} width={62} height={12} rx={5} className={fill} />
+          <rect x={22} y={82} width={12} height={58} rx={5} className={fill} transform="rotate(20 28 111)" />
           <line x1={6} y1={FLOOR} x2={194} y2={FLOOR} className={line} strokeWidth={3} />
         </g>
       )}
@@ -365,7 +370,8 @@ function Env({ m }: { m: Motion }) {
         <g>
           <rect x={96} y={96} width={44} height={13} rx={6} className={fill} transform="rotate(20 118 102)" />
           <rect x={112} y={104} width={10} height={80} rx={4} className={fill} />
-          <rect x={40} y={128} width={16} height={10} rx={4} className={fill} />
+          <rect x={30} y={92} width={18} height={11} rx={4} className={fill} />
+          <rect x={36} y={100} width={8} height={92} rx={3} className={fill} />
           <line x1={6} y1={FLOOR} x2={194} y2={FLOOR} className={line} strokeWidth={3} />
         </g>
       )}
@@ -404,8 +410,9 @@ export function Figure({
 
   const poly = (...pts: Pt[]) => pts.map((q) => `${q.x},${q.y}`).join(" ");
 
+  // запас сверху: в верхних точках жимов снаряд уходит выше макушки
   return (
-    <svg viewBox="0 0 200 200" className={className} aria-hidden="true">
+    <svg viewBox="0 -30 200 230" className={className} aria-hidden="true">
       <Env m={motion} />
 
       {/* дальние конечности — приглушённо, для объёма */}

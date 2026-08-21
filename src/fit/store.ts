@@ -38,11 +38,22 @@ function load(): State {
     const raw = localStorage.getItem(KEY);
     if (!raw) return initial();
     const parsed = JSON.parse(raw) as Partial<State>;
-    // мягкое слияние: новые поля из initial() не ломают старые сохранения
-    return { ...initial(), ...parsed, v: VERSION };
+    return merge(parsed);
   } catch {
     return initial();
   }
+}
+
+/** Слияние с дефолтами: настройки — по полям, иначе новая опция придёт undefined. */
+function merge(parsed: Partial<State>): State {
+  const base = initial();
+  return {
+    ...base,
+    ...parsed,
+    v: VERSION,
+    settings: { ...base.settings, ...(parsed.settings ?? {}) },
+    timer: { ...base.timer, ...(parsed.timer ?? {}) },
+  };
 }
 
 let state: State = load();
@@ -71,19 +82,23 @@ function update(mutate: (s: State) => void) {
 
 function subscribe(l: () => void) {
   listeners.add(l);
-  return () => listeners.delete(l);
-}
-
-export function useFit<T>(selector: (s: State) => T): T {
-  return useSyncExternalStore(
-    subscribe,
-    () => selector(state),
-    () => selector(state),
-  );
+  return () => {
+    listeners.delete(l);
+  };
 }
 
 export function getState(): State {
   return state;
+}
+
+/**
+ * Селектор применяется при рендере, а useSyncExternalStore получает стабильную
+ * ссылку на state. Иначе селектор вида `s => s.plan.map(...)` возвращал бы
+ * каждый раз новый объект, и React ругался бы на некешированный снапшот.
+ */
+export function useFit<T>(selector: (s: State) => T): T {
+  const snap = useSyncExternalStore(subscribe, getState, getState);
+  return selector(snap);
 }
 
 // ───────────────────────── упражнения ─────────────────────────
@@ -241,9 +256,14 @@ export function nextDay(s: State = state): PlanDay | null {
   return s.plan[(i + 1) % s.plan.length];
 }
 
-export function startSession(dayId: string) {
+/**
+ * Начинает тренировку. Если предыдущая не завершена, вернёт false и ничего
+ * не тронет — иначе незаписанные подходы пропали бы молча.
+ */
+export function startSession(dayId: string, force = false): boolean {
   const day = state.plan.find((d) => d.id === dayId);
-  if (!day) return;
+  if (!day) return false;
+  if (state.active && !force) return false;
   const entries: EntryLog[] = day.items.map((it) => {
     const prev = lastEntry(it.exId)?.entry;
     return {
@@ -270,6 +290,7 @@ export function startSession(dayId: string) {
     s.cursor = 0;
     s.timer = { endsAt: null, total: 0, label: "" };
   });
+  return true;
 }
 
 export function setCursor(i: number) {
@@ -364,11 +385,14 @@ export function finishSession() {
     if (!s.active) return;
     const done = structuredClone(s.active);
     done.finishedAt = Date.now();
-    // пустые подходы в историю не тащим
+    // неотмеченные подходы в историю не тащим, но запись с заметкой сохраняем:
+    // «болело плечо, вес не пошёл» — это тоже результат
     done.entries.forEach((e) => {
       e.sets = e.sets.filter((x) => x.done);
     });
-    done.entries = done.entries.filter((e) => e.sets.length > 0);
+    done.entries = done.entries.filter(
+      (e) => e.sets.length > 0 || e.note.trim().length > 0,
+    );
     if (done.entries.length) s.sessions.push(done);
     s.active = null;
     s.cursor = 0;
@@ -428,7 +452,12 @@ export function importJson(text: string): string | null {
     if (!Array.isArray(parsed.plan) || !Array.isArray(parsed.sessions)) {
       return "Файл не похож на выгрузку тренировок";
     }
-    set({ ...initial(), ...parsed, v: VERSION });
+    const okDays = parsed.plan.every(
+      (d) => d && typeof d.id === "string" && Array.isArray(d.items),
+    );
+    if (!okDays) return "План внутри файла испорчен";
+    // незавершённую тренировку из файла не поднимаем: её структуру мы не проверяли
+    set(merge({ ...parsed, active: null, cursor: 0 }));
     return null;
   } catch (e) {
     return "Не удалось прочитать JSON: " + (e as Error).message;

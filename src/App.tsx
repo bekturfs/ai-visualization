@@ -10,6 +10,7 @@ const GradientDescent = lazy(() => import("./pages/GradientDescent"));
 const Backprop = lazy(() => import("./pages/Backprop"));
 const Tokenization = lazy(() => import("./pages/Tokenization"));
 const Embeddings = lazy(() => import("./pages/Embeddings"));
+const FitApp = lazy(() => import("./fit/FitApp"));
 
 function Loading() {
   return (
@@ -32,6 +33,8 @@ export default function App() {
         <Route path="/backpropagation" element={<Backprop />} />
         <Route path="/tokenization" element={<Tokenization />} />
         <Route path="/embeddings" element={<Embeddings />} />
+        {/* личный трекер тренировок — отдельное поддерево, к сайту про ИИ отношения не имеет */}
+        <Route path="/fit/*" element={<FitApp />} />
       </Routes>
     </Suspense>
   );
