@@ -28,13 +28,15 @@ const steps = [];
 const shot = async (name) => {
   await page.screenshot({ path: `${OUT}/${name}.png`, fullPage: true });
 };
+let stepNo = 0;
 const step = async (name, fn) => {
+  stepNo += 1;
   try {
     await fn();
     steps.push(`  ok   ${name}`);
   } catch (e) {
     steps.push(`  FAIL ${name}: ${String(e).split("\n")[0].slice(0, 200)}`);
-    await shot(`fail-${name.replace(/\W+/g, "-")}`);
+    await shot(`fail-${String(stepNo).padStart(2, "0")}`);
   }
 };
 
@@ -55,14 +57,26 @@ await step("тренировка началась", async () => {
 });
 await shot("02-session");
 
-await step("отметил три подхода", async () => {
-  for (let i = 0; i < 3; i++) {
-    const marks = page.getByRole("button", { name: /отметить подход|подход выполнен/i });
-    const n = await marks.count();
-    if (!n) throw new Error("кнопок отметки подхода не найдено");
-    await marks.nth(Math.min(i, n - 1)).click();
-    await page.waitForTimeout(250);
+// заполняет вес и повторы в каждой строке подходов и отмечает их
+const logSets = async (weight, reps) => {
+  const nums = page.locator('input[type="number"]');
+  const total = await nums.count();
+  for (let r = 0; r * 2 + 1 < total; r++) {
+    await nums.nth(r * 2).fill(String(weight));
+    await nums.nth(r * 2 + 1).fill(String(reps));
   }
+  const marks = page.getByRole("button", { name: /отметить подход/i });
+  const n = await marks.count();
+  if (!n) throw new Error("кнопок отметки подхода не найдено");
+  // после отметки подпись меняется на «снять отметку», поэтому всегда берём первый неотмеченный
+  for (let i = 0; i < n; i++) {
+    await marks.first().click({ timeout: 5000 });
+    await page.waitForTimeout(150);
+  }
+};
+
+await step("записал веса и отметил подходы", async () => {
+  await logSets(40, 8);
 });
 await shot("03-sets-logged");
 
@@ -70,13 +84,14 @@ await step("таймер отдыха появился", async () => {
   await page.getByRole("status").waitFor({ timeout: 3000 });
 });
 
-await step("прошёл по всем упражнениям", async () => {
+await step("прошёл по всем упражнениям с весами", async () => {
   for (let i = 0; i < 6; i++) {
     const next = page.getByRole("button", { name: /дальше/i });
     if (!(await next.count())) break;
     if (await next.first().isDisabled().catch(() => false)) break;
     await next.first().click();
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(300);
+    await logSets(20 + i * 5, 10);
   }
 });
 await shot("04-last-exercise");
@@ -105,7 +120,12 @@ await shot("06-history");
 await step("прогресс рисуется", async () => {
   await page.goto(`${BASE}/#/fit/progress`, { waitUntil: "networkidle" });
   await page.waitForTimeout(600);
-  if (!(await page.locator("svg").count())) throw new Error("нет ни одного графика");
+  const svgs = await page.locator("svg").count();
+  if (!svgs) throw new Error("нет ни одного графика");
+  const txt = (await page.textContent("body")) ?? "";
+  if (/нет ни одного подхода с весом/.test(txt)) {
+    throw new Error("тоннаж пуст, хотя веса записаны");
+  }
 });
 await shot("07-progress");
 

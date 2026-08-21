@@ -31,9 +31,9 @@ export function tonnage(ses: Session): number {
   );
 }
 
+/** Длительность; у незавершённой тренировки — сколько идёт прямо сейчас. */
 export function duration(ses: Session): number {
-  if (!ses.finishedAt) return 0;
-  return Math.max(0, (ses.finishedAt - ses.startedAt) / 1000);
+  return Math.max(0, ((ses.finishedAt ?? Date.now()) - ses.startedAt) / 1000);
 }
 
 /** Сколько тренировок за последние n дней. */

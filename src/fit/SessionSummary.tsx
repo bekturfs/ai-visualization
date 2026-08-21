@@ -31,8 +31,8 @@ export function SessionSummary({
     <div className="space-y-3">
       <div className="grid grid-cols-3 gap-2">
         <Stat
-          label="время"
-          value={session.finishedAt ? fmtDuration(duration(session)) : "—"}
+          label={session.finishedAt ? "время" : "идёт"}
+          value={fmtDuration(duration(session))}
         />
         <Stat
           label="тоннаж"
