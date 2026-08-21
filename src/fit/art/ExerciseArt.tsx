@@ -54,6 +54,7 @@ function Photos({ ex }: { ex: Exercise }) {
               alt={`${ex.name}: ${i === 0 ? "начало" : "конец"} движения`}
               loading="lazy"
               onError={() => setFailed(true)}
+              referrerPolicy="no-referrer"
               className="aspect-4/3 w-full bg-panel2 object-cover"
             />
             <figcaption className="px-2 py-1 text-center text-xs text-muted">
@@ -93,11 +94,11 @@ export function youtubeId(url: string): string | null {
   return YT_ID.test(id) ? id : null;
 }
 
-/** Ссылку показываем, только если это обычный http(s) — никаких javascript:. */
+/** Кликабельной делаем только https: ни javascript:, ни data:, ни голый http. */
 function safeHref(url: string): string | null {
   try {
     const u = new URL(url);
-    return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null;
+    return u.protocol === "https:" ? u.toString() : null;
   } catch {
     return null;
   }
@@ -119,8 +120,10 @@ function Video({ ex }: { ex: Exercise }) {
             className="h-full w-full"
             src={`https://www.youtube-nocookie.com/embed/${id}`}
             title={`Видео: ${ex.name}`}
-            allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allow="accelerometer; encrypted-media; gyroscope; picture-in-picture"
+            sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"
             referrerPolicy="strict-origin-when-cross-origin"
+            loading="lazy"
             allowFullScreen
           />
         </div>
@@ -173,7 +176,9 @@ function Video({ ex }: { ex: Exercise }) {
           </p>
         )}
         {saved && !href && (
-          <p className="mt-1 text-xs text-hot">Ссылка непохожа на адрес http(s).</p>
+          <p className="mt-1 text-xs text-hot">
+            Ссылка не похожа на адрес https:// — открывать её не будем.
+          </p>
         )}
       </div>
     </div>

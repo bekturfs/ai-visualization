@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 // ───────────────────────── форматирование ─────────────────────────
 
@@ -184,6 +184,8 @@ export function NumField({
   suffix,
   label,
   compact,
+  integer,
+  ariaLabel,
 }: {
   value: number;
   onChange: (v: number) => void;
@@ -193,31 +195,71 @@ export function NumField({
   suffix?: string;
   label?: string;
   compact?: boolean;
+  /** Повторы и подходы — только целые. */
+  integer?: boolean;
+  ariaLabel?: string;
 }) {
+  const id = useId();
+  // черновик строкой: иначе нельзя стереть поле, а «2,5» превращается в 25
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = draft ?? String(value);
+
   const clamp = (v: number) => Math.min(max, Math.max(min, v));
-  const round = (v: number) => Math.round(v * 100) / 100;
+  const tidy = (v: number) =>
+    integer ? Math.round(clamp(v)) : Math.round(clamp(v) * 100) / 100;
+
+  const parse = (raw: string): number | null => {
+    const t = raw.replace(",", ".").trim();
+    if (!/^-?\d*\.?\d*$/.test(t) || t === "" || t === "-" || t === ".") return null;
+    const v = Number(t);
+    return Number.isFinite(v) ? v : null;
+  };
+
+  const commit = () => {
+    const v = parse(shown);
+    setDraft(null);
+    // пустое, бессмысленное или вне диапазона — оставляем прежнее значение.
+    // Прижать «-5» к нулю значит молча стереть набранные до этого 40 кг.
+    if (v === null || v < min || v > max) return;
+    onChange(tidy(v));
+  };
+
+  const bump = (dir: 1 | -1) => {
+    const base = parse(shown) ?? value;
+    setDraft(null);
+    onChange(tidy(base + dir * step));
+  };
+
   const btn = compact ? "h-9 w-9 text-lg" : "h-11 w-11 text-xl";
+  const name = ariaLabel ?? label;
+
   return (
     <div>
-      {label && <div className="mb-1 text-xs text-muted">{label}</div>}
+      {label && (
+        <label htmlFor={id} className="mb-1 block text-xs text-muted">
+          {label}
+        </label>
+      )}
       <div className="flex items-stretch gap-1">
         <button
           type="button"
-          aria-label="минус"
-          onClick={() => onChange(round(clamp(value - step)))}
+          aria-label={name ? `${name}: меньше` : "меньше"}
+          onClick={() => bump(-1)}
           className={`${btn} shrink-0 rounded-lg border border-edge text-soft transition hover:border-accent/60 hover:text-ink active:bg-panel2`}
         >
           −
         </button>
         <div className="relative min-w-0 flex-1">
           <input
-            type="number"
+            id={id}
+            type="text"
             inputMode="decimal"
-            value={Number.isFinite(value) ? value : 0}
-            step={step}
-            onChange={(e) => {
-              const v = parseFloat(e.target.value);
-              onChange(Number.isFinite(v) ? clamp(v) : 0);
+            aria-label={label ? undefined : name}
+            value={shown}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
             }}
             onFocus={(e) => e.currentTarget.select()}
             className={`w-full rounded-lg border border-edge bg-panel2 text-center font-mono text-ink
@@ -233,8 +275,8 @@ export function NumField({
         </div>
         <button
           type="button"
-          aria-label="плюс"
-          onClick={() => onChange(round(clamp(value + step)))}
+          aria-label={name ? `${name}: больше` : "больше"}
+          onClick={() => bump(1)}
           className={`${btn} shrink-0 rounded-lg border border-edge text-soft transition hover:border-accent/60 hover:text-ink active:bg-panel2`}
         >
           +
@@ -256,17 +298,48 @@ export function Sheet({
   title: string;
   children: ReactNode;
 }) {
+  const panel = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (!open) return;
+    const opener = document.activeElement as HTMLElement | null;
+    panel.current?.focus();
+
+    const focusable = () =>
+      [
+        ...(panel.current?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        ) ?? []),
+      ].filter((el) => el.offsetParent !== null);
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      // ловушка Tab: без неё фокус уходит на страницу за шторкой
+      if (e.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      const cur = document.activeElement;
+      if (e.shiftKey && (cur === first || cur === panel.current)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && cur === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
+
     document.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prev;
+      opener?.focus?.();
     };
   }, [open, onClose]);
 
@@ -279,6 +352,8 @@ export function Sheet({
         aria-hidden="true"
       />
       <div
+        ref={panel}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={title}

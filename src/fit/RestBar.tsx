@@ -66,7 +66,10 @@ export function RestBar({ raised = false }: { raised?: boolean }) {
         ${raised ? "bottom-14 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]" : "bottom-0 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]"}`}>
       <div
         role="status"
-        aria-live="polite"
+        // цифры меняются четыре раза в секунду: озвучивать их — пытка,
+        // голосом сообщаем только про конец отдыха
+        aria-live={over ? "polite" : "off"}
+        aria-atomic="true"
         className={`pointer-events-auto flex w-full max-w-lg items-center gap-3 rounded-2xl border px-3 py-2 shadow-lg backdrop-blur
           ${over ? "border-ok/60 bg-ok/15" : "border-edge bg-panel/95"}`}
       >

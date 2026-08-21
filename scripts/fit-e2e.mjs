@@ -59,7 +59,7 @@ await shot("02-session");
 
 // заполняет вес и повторы в каждой строке подходов и отмечает их
 const logSets = async (weight, reps) => {
-  const nums = page.locator('input[type="number"]');
+  const nums = page.locator('input[inputmode="decimal"]');
   const total = await nums.count();
   for (let r = 0; r * 2 + 1 < total; r++) {
     await nums.nth(r * 2).fill(String(weight));

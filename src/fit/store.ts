@@ -15,7 +15,10 @@ const KEY = "fit.v1";
 const VERSION = 1;
 
 function uid(): string {
-  return Math.random().toString(36).slice(2, 10);
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID().slice(0, 12);
+  }
+  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
 function initial(): State {
@@ -37,22 +40,139 @@ function load(): State {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return initial();
-    const parsed = JSON.parse(raw) as Partial<State>;
-    return merge(parsed);
+    return normalize(JSON.parse(raw));
   } catch {
     return initial();
   }
 }
 
-/** Слияние с дефолтами: настройки — по полям, иначе новая опция придёт undefined. */
-function merge(parsed: Partial<State>): State {
-  const base = initial();
+const isObj = (x: unknown): x is Record<string, unknown> =>
+  typeof x === "object" && x !== null && !Array.isArray(x);
+const str = (x: unknown, def = ""): string => (typeof x === "string" ? x : def);
+const num = (x: unknown, def = 0): number =>
+  typeof x === "number" && Number.isFinite(x) ? x : def;
+const bool = (x: unknown, def: boolean): boolean =>
+  typeof x === "boolean" ? x : def;
+const arr = (x: unknown): unknown[] => (Array.isArray(x) ? x : []);
+
+function normSet(x: unknown): SetLog {
+  const o = isObj(x) ? x : {};
   return {
-    ...base,
-    ...parsed,
+    id: str(o.id) || uid(),
+    weight: num(o.weight),
+    reps: num(o.reps),
+    rpe: typeof o.rpe === "number" ? o.rpe : null,
+    done: bool(o.done, false),
+    at: typeof o.at === "number" ? o.at : null,
+  };
+}
+
+function normEntry(x: unknown): EntryLog {
+  const o = isObj(x) ? x : {};
+  const sets = arr(o.sets).map(normSet);
+  return {
+    exId: str(o.exId),
+    targetSets: num(o.targetSets, sets.length),
+    targetReps: str(o.targetReps),
+    targetRest: num(o.targetRest, 90),
+    planNote: str(o.planNote),
+    sets: sets.length ? sets : [normSet({})],
+    note: str(o.note),
+    done: bool(o.done, false),
+  };
+}
+
+function normSession(x: unknown): Session {
+  const o = isObj(x) ? x : {};
+  return {
+    id: str(o.id) || uid(),
+    dayId: str(o.dayId),
+    dayName: str(o.dayName, "тренировка"),
+    startedAt: num(o.startedAt, Date.now()),
+    finishedAt: typeof o.finishedAt === "number" ? o.finishedAt : null,
+    entries: arr(o.entries).map(normEntry),
+    note: str(o.note),
+    feel: typeof o.feel === "number" ? o.feel : null,
+  };
+}
+
+function normDay(x: unknown): PlanDay {
+  const o = isObj(x) ? x : {};
+  return {
+    id: str(o.id) || uid(),
+    name: str(o.name, "день"),
+    subtitle: str(o.subtitle),
+    items: arr(o.items).map((it) => {
+      const i = isObj(it) ? it : {};
+      return {
+        exId: str(i.exId),
+        sets: num(i.sets, 3),
+        reps: str(i.reps, "8–12"),
+        rest: num(i.rest, 90),
+        note: str(i.note) || undefined,
+      };
+    }),
+  };
+}
+
+/**
+ * Приводит что угодно к валидному состоянию. Чужой или битый JSON не должен
+ * укладывать приложение белым экраном, который переживёт перезагрузку.
+ */
+function normalize(parsed: unknown): State {
+  const base = initial();
+  if (!isObj(parsed)) return base;
+  const settings = isObj(parsed.settings) ? parsed.settings : {};
+  const timer = isObj(parsed.timer) ? parsed.timer : {};
+  const endsAt = typeof timer.endsAt === "number" ? timer.endsAt : null;
+  const videos: Record<string, string> = {};
+  if (isObj(parsed.videos)) {
+    for (const [k, v] of Object.entries(parsed.videos)) {
+      if (typeof v === "string") videos[k] = v;
+    }
+  }
+  return {
     v: VERSION,
-    settings: { ...base.settings, ...(parsed.settings ?? {}) },
-    timer: { ...base.timer, ...(parsed.timer ?? {}) },
+    plan: arr(parsed.plan).map(normDay),
+    customEx: arr(parsed.customEx).filter(isObj).map((e) => ({
+      id: str(e.id) || uid(),
+      name: str(e.name, "упражнение"),
+      en: str(e.en),
+      group: (str(e.group, "shoulders") as Exercise["group"]),
+      heads: Array.isArray(e.heads)
+        ? (e.heads.filter((h) => typeof h === "string") as Exercise["heads"])
+        : undefined,
+      equipment: str(e.equipment, "dumbbell") as Exercise["equipment"],
+      motion: str(e.motion, "lateralRaise"),
+      photo: typeof e.photo === "string" ? e.photo : undefined,
+      cues: arr(e.cues).filter((c): c is string => typeof c === "string"),
+      mistakes: Array.isArray(e.mistakes)
+        ? e.mistakes.filter((c): c is string => typeof c === "string")
+        : undefined,
+      def: isObj(e.def)
+        ? {
+            sets: num(e.def.sets, 3),
+            reps: str(e.def.reps, "8–12"),
+            rest: num(e.def.rest, 90),
+          }
+        : { sets: 3, reps: "8–12", rest: 90 },
+      custom: true,
+    })),
+    videos,
+    sessions: arr(parsed.sessions).map(normSession),
+    active: isObj(parsed.active) ? normSession(parsed.active) : null,
+    cursor: num(parsed.cursor),
+    // просроченный отдых не оживляем: иначе через сутки приложение встретит гудком
+    timer:
+      endsAt && endsAt > Date.now()
+        ? { endsAt, total: num(timer.total, 60), label: str(timer.label) }
+        : base.timer,
+    settings: {
+      sound: bool(settings.sound, base.settings.sound),
+      vibrate: bool(settings.vibrate, base.settings.vibrate),
+      photos: bool(settings.photos, base.settings.photos),
+      autoRest: bool(settings.autoRest, base.settings.autoRest),
+    },
   };
 }
 
@@ -96,6 +216,20 @@ export function getState(): State {
  * ссылку на state. Иначе селектор вида `s => s.plan.map(...)` возвращал бы
  * каждый раз новый объект, и React ругался бы на некешированный снапшот.
  */
+// другая вкладка того же браузера пишет в тот же ключ: перечитываем, иначе
+// одна вкладка молча затрёт правки другой
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    if (e.key !== KEY || e.newValue === null) return;
+    try {
+      state = normalize(JSON.parse(e.newValue));
+      listeners.forEach((l) => l());
+    } catch {
+      /* мусор из другой вкладки игнорируем */
+    }
+  });
+}
+
 export function useFit<T>(selector: (s: State) => T): T {
   const snap = useSyncExternalStore(subscribe, getState, getState);
   return selector(snap);
@@ -117,13 +251,6 @@ export function addCustomExercise(ex: Omit<Exercise, "id" | "custom">) {
     s.customEx.push({ ...ex, id, custom: true });
   });
   return id;
-}
-
-export function updateCustomExercise(id: string, patch: Partial<Exercise>) {
-  update((s) => {
-    const i = s.customEx.findIndex((e) => e.id === id);
-    if (i >= 0) s.customEx[i] = { ...s.customEx[i], ...patch, id };
-  });
 }
 
 export function removeCustomExercise(id: string) {
@@ -271,6 +398,7 @@ export function startSession(dayId: string, force = false): boolean {
       targetSets: it.sets,
       targetReps: it.reps,
       targetRest: it.rest,
+      planNote: it.note ?? "",
       sets: makeSets(it.sets, prev),
       note: "",
       done: false,
@@ -380,7 +508,8 @@ export function setSessionMeta(patch: Partial<Pick<Session, "note" | "feel">>) {
   });
 }
 
-export function finishSession() {
+export function finishSession(): boolean {
+  let saved = false;
   update((s) => {
     if (!s.active) return;
     const done = structuredClone(s.active);
@@ -393,11 +522,15 @@ export function finishSession() {
     done.entries = done.entries.filter(
       (e) => e.sets.length > 0 || e.note.trim().length > 0,
     );
-    if (done.entries.length) s.sessions.push(done);
+    if (done.entries.length) {
+      s.sessions.push(done);
+      saved = true;
+    }
     s.active = null;
     s.cursor = 0;
     s.timer = { endsAt: null, total: 0, label: "" };
   });
+  return saved;
 }
 
 export function cancelSession() {
@@ -448,16 +581,15 @@ export function exportJson(): string {
 
 export function importJson(text: string): string | null {
   try {
-    const parsed = JSON.parse(text) as Partial<State>;
-    if (!Array.isArray(parsed.plan) || !Array.isArray(parsed.sessions)) {
+    const parsed: unknown = JSON.parse(text);
+    if (!isObj(parsed) || !Array.isArray(parsed.plan) || !Array.isArray(parsed.sessions)) {
       return "Файл не похож на выгрузку тренировок";
     }
-    const okDays = parsed.plan.every(
-      (d) => d && typeof d.id === "string" && Array.isArray(d.items),
-    );
-    if (!okDays) return "План внутри файла испорчен";
-    // незавершённую тренировку из файла не поднимаем: её структуру мы не проверяли
-    set(merge({ ...parsed, active: null, cursor: 0 }));
+    const next = normalize(parsed);
+    // незавершённую тренировку из файла не поднимаем: доверия к ней нет
+    next.active = null;
+    next.cursor = 0;
+    set(next);
     return null;
   } catch (e) {
     return "Не удалось прочитать JSON: " + (e as Error).message;
@@ -468,21 +600,3 @@ export function wipeAll() {
   set(initial());
 }
 
-// ───────────────────────── статистика ─────────────────────────
-
-export function entryVolume(e: EntryLog): number {
-  return e.sets.reduce(
-    (sum, s) => (s.done ? sum + s.weight * s.reps : sum),
-    0,
-  );
-}
-
-export function sessionVolume(ses: Session): number {
-  return ses.entries.reduce((sum, e) => sum + entryVolume(e), 0);
-}
-
-export function bestSet(e: EntryLog): SetLog | null {
-  const done = e.sets.filter((s) => s.done);
-  if (!done.length) return null;
-  return done.reduce((a, b) => (b.weight > a.weight ? b : a));
-}

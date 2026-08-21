@@ -71,6 +71,8 @@ export type EntryLog = {
   targetSets: number;
   targetReps: string;
   targetRest: number;
+  /** Заметка из плана, скопированная на старте тренировки. */
+  planNote: string;
   sets: SetLog[];
   note: string;
   done: boolean;

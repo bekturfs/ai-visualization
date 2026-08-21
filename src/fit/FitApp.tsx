@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect } from "react";
 import { NavLink, Route, Routes, useLocation, Link } from "react-router-dom";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { RestBar } from "./RestBar";
 import { useFit } from "./store";
 
@@ -91,17 +92,19 @@ export default function FitApp() {
       </header>
 
       <main className={`mx-auto max-w-lg px-4 pt-4 ${running ? "pb-40" : "pb-32"}`}>
-        <Suspense fallback={<Loading />}>
-          <Routes>
-            <Route index element={<Today />} />
-            <Route path="run" element={<Session />} />
-            <Route path="plan" element={<Plan />} />
-            <Route path="library" element={<Library />} />
-            <Route path="history" element={<History />} />
-            <Route path="progress" element={<Progress />} />
-            <Route path="settings" element={<Settings />} />
-          </Routes>
-        </Suspense>
+        <ErrorBoundary>
+          <Suspense fallback={<Loading />}>
+            <Routes>
+              <Route index element={<Today />} />
+              <Route path="run" element={<Session />} />
+              <Route path="plan" element={<Plan />} />
+              <Route path="library" element={<Library />} />
+              <Route path="history" element={<History />} />
+              <Route path="progress" element={<Progress />} />
+              <Route path="settings" element={<Settings />} />
+            </Routes>
+          </Suspense>
+        </ErrorBoundary>
       </main>
 
       <RestBar raised={!running} />

@@ -62,6 +62,7 @@ function SetRow({
         <div className="min-w-0 flex-[1.3]">
           <NumField
             compact
+            ariaLabel={`вес, подход ${num}`}
             value={set.weight}
             step={2.5}
             suffix="кг"
@@ -71,6 +72,8 @@ function SetRow({
         <div className="min-w-0 flex-1">
           <NumField
             compact
+            integer
+            ariaLabel={`повторы, подход ${num}`}
             value={set.reps}
             step={1}
             onChange={(v) => patchSet(entryIdx, setIdx, { reps: v })}
@@ -186,6 +189,9 @@ export default function Session() {
   // ───────── экран завершения ─────────
   if (showSummary) {
     const skipped = entries.filter((e) => !e.sets.some((s) => s.done));
+    const nothingLogged = entries.every(
+      (e) => !e.sets.some((s) => s.done) && !e.note.trim(),
+    );
     const elapsed = (Date.now() - active.startedAt) / 1000;
     return (
       <div className="space-y-4">
@@ -264,7 +270,7 @@ export default function Session() {
 
         <div className="flex flex-col gap-2">
           <Btn
-            variant="primary"
+            variant={nothingLogged ? "ghost" : "primary"}
             size="lg"
             className="w-full"
             onClick={() => {
@@ -272,8 +278,14 @@ export default function Session() {
               navigate("/fit");
             }}
           >
-            Сохранить в журнал
+            {nothingLogged ? "Закрыть без записи" : "Сохранить в журнал"}
           </Btn>
+          {nothingLogged && (
+            <p className="text-center text-xs text-muted">
+              Ни одного отмеченного подхода и ни одной заметки — в журнал
+              записывать нечего.
+            </p>
+          )}
           <Btn
             variant="ghost"
             className="w-full"
@@ -416,6 +428,12 @@ export default function Session() {
           </>
         )}
       </Card>
+
+      {entry.planNote && (
+        <p className="rounded-xl border border-amber/40 bg-amber/10 px-3 py-2 text-sm text-amber">
+          из плана: {entry.planNote}
+        </p>
+      )}
 
       <section>
         <SectionTitle>

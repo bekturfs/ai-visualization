@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { Session } from "./types";
 import { exById, useFit } from "./store";
 import { doneSets, duration, tonnage } from "./stats";
@@ -23,6 +24,14 @@ export function SessionSummary({
   compareTo?: Session | null;
 }) {
   const state = useFit((s) => s);
+  // у незавершённой тренировки счётчик должен идти, а не застыть на рендере
+  const live = session.finishedAt === null;
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!live) return;
+    const id = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [live]);
   const vol = tonnage(session);
   const prevVol = compareTo ? tonnage(compareTo) : null;
   const delta = prevVol !== null && prevVol > 0 ? vol - prevVol : null;
@@ -68,7 +77,11 @@ export function SessionSummary({
                 <div className="text-sm text-muted">
                   {done.length
                     ? done
-                        .map((s) => (s.weight ? `${s.weight}×${s.reps}` : `${s.reps}`))
+                        .map((s) => {
+                          const base = s.weight ? `${s.weight}×${s.reps}` : `${s.reps}`;
+                          // RPE записывали в зале — значит его надо показывать
+                          return s.rpe ? `${base} @${s.rpe}` : base;
+                        })
                         .join(" · ")
                     : "без отмеченных подходов"}
                 </div>
