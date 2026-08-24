@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Link } from "react-router-dom";
 import Home from "./pages/Home";
 
 const BigPicture = lazy(() => import("./pages/BigPicture"));
@@ -11,6 +11,43 @@ const Backprop = lazy(() => import("./pages/Backprop"));
 const Tokenization = lazy(() => import("./pages/Tokenization"));
 const Embeddings = lazy(() => import("./pages/Embeddings"));
 const FitApp = lazy(() => import("./fit/FitApp"));
+
+/**
+ * Без этого любой неизвестный адрес отрисовывал пустоту: ни один маршрут не
+ * совпадал, и человек видел просто фон страницы, не понимая, что произошло.
+ */
+function NotFound() {
+  let shown = location.hash || "/";
+  try {
+    // без этого кириллический адрес показывается процентными кодами
+    shown = decodeURIComponent(shown);
+  } catch {
+    /* битая последовательность — покажем как есть */
+  }
+  return (
+    <div className="mx-auto flex min-h-[70vh] max-w-lg flex-col justify-center gap-4 px-4">
+      <h1 className="text-xl font-semibold text-ink">Такой страницы нет</h1>
+      <p className="text-soft">
+        Адрес <code className="text-amber">{shown}</code> ничему
+        не соответствует. Возможно, эта часть сайта ещё не выложена.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Link
+          to="/"
+          className="inline-flex min-h-11 items-center rounded-xl border border-edge px-4 text-soft transition hover:border-accent/60 hover:text-ink"
+        >
+          На главную
+        </Link>
+        <Link
+          to="/fit"
+          className="inline-flex min-h-11 items-center rounded-xl border border-edge px-4 text-soft transition hover:border-accent/60 hover:text-ink"
+        >
+          Тренировки
+        </Link>
+      </div>
+    </div>
+  );
+}
 
 function Loading() {
   return (
@@ -35,6 +72,7 @@ export default function App() {
         <Route path="/embeddings" element={<Embeddings />} />
         {/* личный трекер тренировок — отдельное поддерево, к сайту про ИИ отношения не имеет */}
         <Route path="/fit/*" element={<FitApp />} />
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </Suspense>
   );
